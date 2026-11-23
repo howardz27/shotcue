@@ -2,11 +2,11 @@
   <img src="docs/media/shotcue-logo.png" width="96" alt="ShotCue Logo">
 </p>
 <h1 align="center">ShotCue</h1>
-<p align="center">给 AI Agent 的截图反馈工具</p>
+<p align="center">给你与AI Agent高效协同的截图反馈工具</p>
 
-在图上圈出要改的位置，写下「当前问题」和「期望调整」，再把带编号的图片或 Markdown 反馈贴给 Agent。
+在图上圈出要改的位置，写下「当前问题」和「期望调整」，再把带编号和需求的图片贴给 Agent。
 
-![ShotCue 主界面，左侧是带编号标注的截图，右侧是对应的反馈清单](docs/media/workspace.png)
+![用 ShotCue 框选问题、填写反馈并预览导出图片](docs/media/shotcue-demo.gif)
 
 ## 下载与安装
 
@@ -27,10 +27,6 @@
 - **交给 Agent**。预览、复制或保存带编号的 PNG，也可以复制带原图像素坐标的 Markdown。有文字时，PNG 会附上反馈清单。所有说明都留空时，导出保留原图尺寸和图上的标记。
 
 ShotCue 可离线使用，最近一次评审会作为草稿保存在本机。
-
-### 操作演示
-
-![实际操作演示，拖框标注按钮，填写问题和期望调整，再查看导出预览](docs/media/shotcue-demo.gif)
 
 ### 快捷键
 

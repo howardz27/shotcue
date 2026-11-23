@@ -242,11 +242,14 @@ struct MarkLayout {
 enum ImageExport {
     enum Failure: LocalizedError {
         case noSource, size, encoding
-        var errorDescription: String? {
+        var errorDescription: String? { message(in: .english) }
+
+        func message(in language: AppLanguage) -> String {
             switch self {
-            case .noSource: "请先打开截图"
-            case .size: "这张截图和说明合成后的图片过大，可以单独保存说明"
-            case .encoding: "无法生成 PNG"
+            case .noSource: language.text("请先打开截图", "Open a screenshot first")
+            case .size: language.text("这张截图和说明合成后的图片过大，可以单独保存说明",
+                                      "The image is too large with feedback attached. Save the feedback separately.")
+            case .encoding: language.text("无法生成 PNG", "Could not create the PNG")
             }
         }
     }
@@ -260,7 +263,8 @@ enum ImageExport {
 
     private static let drawingOptions: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
 
-    static func render(_ review: Review, appearance: AnnotationAppearance = .init()) throws -> CGImage {
+    static func render(_ review: Review, appearance: AnnotationAppearance = .init(),
+                       language: AppLanguage = .chinese) throws -> CGImage {
         guard let source = review.source else { throw Failure.noSource }
         guard !review.marks.isEmpty else { return source.image }
 
@@ -283,9 +287,10 @@ enum ImageExport {
         }
 
         let rows = (includeFeedback ? review.marks : []).map { mark -> Row in
-            let location = Ink.text(mark.location(in: source.size), size: 15 * unit, weight: .semibold, color: muted)
+            let location = Ink.text(mark.location(in: source.size, language: language), size: 15 * unit, weight: .semibold, color: muted)
             var blocks: [(NSAttributedString, CGFloat)] = []
-            for (label, raw) in [("当前问题", mark.problem), ("期望调整", mark.desired)] {
+            for (label, raw) in [(language.text("当前问题", "Current issue"), mark.problem),
+                                 (language.text("期望调整", "Requested change"), mark.desired)] {
                 let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !value.isEmpty else { continue }
                 let content = NSMutableAttributedString(attributedString: Ink.text(label + "  ",
@@ -294,7 +299,7 @@ enum ImageExport {
                 blocks.append((content, height(of: content)))
             }
             if blocks.isEmpty {
-                let empty = Ink.text("说明待填写", size: 18 * unit, color: muted)
+                let empty = Ink.text(language.text("说明待填写", "No written feedback yet"), size: 18 * unit, color: muted)
                 blocks.append((empty, height(of: empty)))
             }
             let rowHeight = height(of: location) + blocks.reduce(0) { $0 + $1.1 + 7 * unit } + 36 * unit
@@ -326,12 +331,14 @@ enum ImageExport {
             Ink.fill(canvas, CGRect(x: 0, y: screenshotHeight, width: width, height: 3 * unit), appearance.fill)
 
             let left = (width - panelWidth) / 2 + margin
-            Ink.text("上图标注说明", size: 27 * unit, weight: .bold, color: ink)
+            Ink.text(language.text("上图标注说明", "Screenshot feedback"), size: 27 * unit, weight: .bold, color: ink)
                 .draw(at: CGPoint(x: left, y: screenshotHeight + 19 * unit))
-            Ink.text("每条说明对应上图中相同编号的标记。", size: 15 * unit, weight: .semibold, color: muted)
+            Ink.text(language.text("每条说明对应上图中相同编号的标记。", "Each note matches its numbered annotation above."),
+                     size: 15 * unit, weight: .semibold, color: muted)
                 .draw(at: CGPoint(x: left, y: screenshotHeight + 57 * unit))
-            Ink.text("\(rows.count) 条标注  ·  原图 \(source.image.width) × \(source.image.height) px  ·  坐标原点为原图左上角",
-                     size: 13 * unit, weight: .medium, color: muted)
+            let size = "\(source.image.width) × \(source.image.height) px"
+            let details = language.text("原图 \(size)  ·  坐标原点为原图左上角", "Original: \(size)  ·  Origin: top-left")
+            Ink.text("\(language.annotationCount(rows.count))  ·  \(details)", size: 13 * unit, weight: .medium, color: muted)
                 .draw(at: CGPoint(x: left, y: screenshotHeight + 80 * unit))
 
             var y = screenshotHeight + headerHeight
@@ -369,7 +376,8 @@ enum ImageExport {
         return buffer as Data
     }
 
-    static func png(_ review: Review, appearance: AnnotationAppearance = .init()) throws -> Data {
-        try pngData(render(review, appearance: appearance))
+    static func png(_ review: Review, appearance: AnnotationAppearance = .init(),
+                    language: AppLanguage = .chinese) throws -> Data {
+        try pngData(render(review, appearance: appearance, language: language))
     }
 }

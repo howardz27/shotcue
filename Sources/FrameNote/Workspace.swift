@@ -17,6 +17,7 @@ enum Palette {
 struct Workspace: View {
     @ObservedObject var model: ReviewModel
     let actions: AppActions
+    private var language: AppLanguage { model.language }
     @State private var dropTarget = false
     @State private var showCaptureOptions = false
     @State private var showSaveOptions = false
@@ -40,14 +41,14 @@ struct Workspace: View {
         .tint(accent)
         .preferredColorScheme(.light)
         .sheet(item: $model.exportPreview) { request in
-            ExportPreview(review: request.review, appearance: request.appearance)
+            ExportPreview(review: request.review, appearance: request.appearance, language: request.language)
         }
         .onDrop(of: [.fileURL, .image], isTargeted: $dropTarget, perform: receiveDrop)
     }
 
     private var toolbar: some View {
         GeometryReader { geometry in
-            toolbarContent(compact: geometry.size.width < 1110)
+            toolbarContent(compact: geometry.size.width < (language == .english ? 1240 : 1110))
                 .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .frame(height: 52)
@@ -74,8 +75,8 @@ struct Workspace: View {
                 .padding(.trailing, 3)
 
             HStack(spacing: 0) {
-                ActionButton("打开", icon: "folder", hint: "打开图片  ⌘O", kind: .quiet, action: actions.open)
-                toolbarUtility("粘贴", icon: "doc.on.clipboard", hint: "粘贴图片  ⌘V", compact: compact, action: model.paste)
+                ActionButton(language.text("打开", "Open"), icon: "folder", hint: language.text("打开图片  ⌘O", "Open image  ⌘O"), kind: .quiet, action: actions.open)
+                toolbarUtility(language.text("粘贴", "Paste"), icon: "doc.on.clipboard", hint: language.text("粘贴图片  ⌘V", "Paste image  ⌘V"), compact: compact, action: model.paste)
                 captureControls
             }
             .fixedSize()
@@ -84,11 +85,11 @@ struct Workspace: View {
 
             HStack(spacing: 7) {
                 HStack(spacing: 2) {
-                    ToolButton(label: "选择", icon: "cursorarrow", hint: "选择和移动标注  V",
+                    ToolButton(label: language.text("选择", "Select"), icon: "cursorarrow", hint: language.text("选择和移动标注  V", "Select and move annotations  V"),
                                selected: hasImage && model.tool == nil, showsLabel: !compact) { model.tool = nil }
                     ForEach(MarkTool.allCases, id: \.self) { tool in
-                        ToolButton(label: tool.label, icon: tool.icon, hint: "\(tool.instruction)  \(tool.shortcut)",
-                                   selected: hasImage && model.tool == tool, showsLabel: true) { model.tool = tool }
+                        ToolButton(label: tool.label(in: language), icon: tool.icon, hint: "\(tool.instruction(in: language))  \(tool.shortcut)",
+                                   selected: hasImage && model.tool == tool, showsLabel: !compact || language == .chinese) { model.tool = tool }
                     }
                 }
                 .padding(3)
@@ -99,9 +100,9 @@ struct Workspace: View {
                 annotationColorButton
 
                 HStack(spacing: 2) {
-                    IconButton("撤销", icon: "arrow.uturn.backward", hint: "撤销  ⌘Z", action: model.undo)
+                    IconButton(language.text("撤销", "Undo"), icon: "arrow.uturn.backward", hint: language.text("撤销  ⌘Z", "Undo  ⌘Z"), action: model.undo)
                         .disabled(!model.canUndo)
-                    IconButton("重做", icon: "arrow.uturn.forward", hint: "重做  ⌘⇧Z", action: model.redo)
+                    IconButton(language.text("重做", "Redo"), icon: "arrow.uturn.forward", hint: language.text("重做  ⌘⇧Z", "Redo  ⌘⇧Z"), action: model.redo)
                         .disabled(!model.canRedo)
                 }
             }
@@ -110,26 +111,26 @@ struct Workspace: View {
             toolbarDragSpace
 
             HStack(spacing: 5) {
-                toolbarUtility("预览", icon: "eye", hint: "预览导出图片  ⌘Y",
+                toolbarUtility(language.text("预览", "Preview"), icon: "eye", hint: language.text("预览导出图片  ⌘Y", "Preview export  ⌘Y"),
                                compact: compact, action: actions.previewExport)
                     .disabled(!hasImage)
-                ActionButton("复制图片", icon: "photo.on.rectangle", hint: "复制标注图片  ⌘⌥C",
+                ActionButton(language.text("复制图片", "Copy Image"), icon: "photo.on.rectangle", hint: language.text("复制标注图片  ⌘⌥C", "Copy annotated image  ⌘⌥C"),
                              kind: .primary, action: actions.copyImage)
                     .disabled(!hasImage)
-                toolbarUtility("复制反馈", icon: "doc.on.doc", hint: "复制给 Agent 的 Markdown  ⌘⇧C",
+                toolbarUtility(language.text("复制反馈", "Copy Feedback"), icon: "doc.on.doc", hint: language.text("复制给 Agent 的 Markdown  ⌘⇧C", "Copy Markdown feedback for your agent  ⌘⇧C"),
                                compact: compact, action: actions.copyFeedback)
                     .disabled(model.review.marks.isEmpty)
-                ActionButton("保存", icon: "square.and.arrow.down", hint: "保存为 PNG 或 Markdown", kind: .outline, showsMenu: true) {
+                ActionButton(language.text("保存", "Save"), icon: "square.and.arrow.down", hint: language.text("保存为 PNG 或 Markdown", "Save as PNG or Markdown"), kind: .outline, showsMenu: true) {
                     showSaveOptions.toggle()
                 }
                 .disabled(!hasImage)
                 .popover(isPresented: $showSaveOptions, arrowEdge: .bottom) {
                     VStack(spacing: 3) {
-                        ToolbarChoice("保存图片（PNG）", icon: "photo") {
+                        ToolbarChoice(language.text("保存图片（PNG）", "Save Image (PNG)"), icon: "photo") {
                             showSaveOptions = false
                             actions.saveImage()
                         }
-                        ToolbarChoice("保存反馈（Markdown）", icon: "doc.text") {
+                        ToolbarChoice(language.text("保存反馈（Markdown）", "Save Feedback (Markdown)"), icon: "doc.text") {
                             showSaveOptions = false
                             actions.saveFeedback()
                         }
@@ -176,22 +177,22 @@ struct Workspace: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(HoverButton(kind: .quiet))
-        .accessibilityLabel("标注颜色")
+        .accessibilityLabel(language.text("标注颜色", "Annotation Color"))
         .accessibilityIdentifier("annotation-color")
-        .help("选择标注颜色")
+        .help(language.text("选择标注颜色", "Choose annotation color"))
         .popover(isPresented: $model.showAnnotationColors, arrowEdge: .bottom) {
-            AnnotationColorOptions(selection: $model.annotationAppearance)
+            AnnotationColorOptions(selection: $model.annotationAppearance, language: language)
         }
     }
 
     private var captureControls: some View {
         HStack(spacing: 0) {
-            ActionButton("截图", icon: "camera.viewfinder", hint: "截取屏幕区域  ⌘⇧S", kind: .quiet, action: actions.capture)
-            IconButton("截图设置", icon: "chevron.down", hint: "设置截图时是否隐藏窗口") {
+            ActionButton(language.text("截图", "Capture"), icon: "camera.viewfinder", hint: language.text("截取屏幕区域  ⌘⇧S", "Capture a screen area  ⌘⇧S"), kind: .quiet, action: actions.capture)
+            IconButton(language.text("截图设置", "Capture Settings"), icon: "chevron.down", hint: language.text("设置截图时是否隐藏窗口", "Choose whether to hide ShotCue during capture")) {
                 showCaptureOptions.toggle()
             }
             .popover(isPresented: $showCaptureOptions, arrowEdge: .bottom) {
-                Toggle("截图时隐藏 ShotCue 窗口", isOn: $model.hideWindowDuringCapture)
+                Toggle(language.text("截图时隐藏 ShotCue 窗口", "Hide ShotCue during capture"), isOn: $model.hideWindowDuringCapture)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 13, weight: .medium))
                     .padding(.horizontal, 13)
@@ -219,7 +220,7 @@ struct Workspace: View {
                         .overlay { RoundedRectangle(cornerRadius: 15).strokeBorder(accent, style: StrokeStyle(lineWidth: 2, dash: [7, 5])) }
                         .padding(14)
                         .overlay {
-                            Label("松开以打开图片", systemImage: "arrow.down.to.line")
+                            Label(language.text("松开以打开图片", "Drop to open image"), systemImage: "arrow.down.to.line")
                                 .font(.system(size: 16, weight: .semibold))
                                 .padding(.horizontal, 18).padding(.vertical, 12)
                                 .background(Palette.selected, in: Capsule())
@@ -262,23 +263,23 @@ struct Workspace: View {
                 .frame(width: 80, height: 80)
                 .accessibilityHidden(true)
                 .padding(.bottom, 16)
-            Text("打开图片开始标注")
+            Text(language.text("打开图片开始标注", "Open an image to start annotating"))
                 .font(.system(size: 26, weight: .semibold))
                 .tracking(-0.7)
                 .padding(.bottom, 8)
-            Text("也可以拖入文件、粘贴图片或截取屏幕")
+            Text(language.text("也可以拖入文件、粘贴图片或截取屏幕", "Drag in a file, paste an image, or capture your screen"))
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.muted)
                 .padding(.bottom, 24)
             HStack(spacing: 8) {
-                ActionButton("打开图片", icon: "folder", hint: "打开图片  ⌘O", kind: .primary, action: actions.open)
-                ActionButton("粘贴", icon: "doc.on.clipboard", hint: "粘贴图片  ⌘V", kind: .outline, action: model.paste)
-                ActionButton("截图", icon: "camera.viewfinder", hint: "截取屏幕区域  ⌘⇧S", kind: .outline, action: actions.capture)
+                ActionButton(language.text("打开图片", "Open Image"), icon: "folder", hint: language.text("打开图片  ⌘O", "Open image  ⌘O"), kind: .primary, action: actions.open)
+                ActionButton(language.text("粘贴", "Paste"), icon: "doc.on.clipboard", hint: language.text("粘贴图片  ⌘V", "Paste image  ⌘V"), kind: .outline, action: model.paste)
+                ActionButton(language.text("截图", "Capture"), icon: "camera.viewfinder", hint: language.text("截取屏幕区域  ⌘⇧S", "Capture a screen area  ⌘⇧S"), kind: .outline, action: actions.capture)
                     .disabled(model.capturing)
             }
             Button(action: actions.openDemo) {
                 HStack(spacing: 5) {
-                    Text("查看评审示例")
+                    Text(language.text("查看评审示例", "View sample review"))
                     Image(systemName: "arrow.up.right").font(.system(size: 8, weight: .bold))
                 }
                 .font(.system(size: 12, weight: .semibold))
@@ -294,7 +295,7 @@ struct Workspace: View {
 
     private var canvasFooter: some View {
         let toolIcon = model.tool?.icon ?? "cursorarrow"
-        let instruction = model.tool?.instruction ?? "点击选择 · 拖框多选"
+        let instruction = model.tool?.instruction(in: language) ?? language.text("点击选择 · 拖框多选", "Click to select · drag to select multiple")
         return HStack(spacing: 8) {
             if let source = model.review.source {
                 Image(systemName: "photo")
@@ -321,13 +322,13 @@ struct Workspace: View {
             }
             .foregroundStyle(.black)
             Rectangle().fill(Palette.line).frame(width: 1, height: 13).padding(.horizontal, 3)
-            IconButton("缩小", icon: "minus", hint: "缩小", action: { model.adjustZoom(by: 1 / 1.25) })
+            IconButton(language.text("缩小", "Zoom Out"), icon: "minus", hint: language.text("缩小", "Zoom Out"), action: { model.adjustZoom(by: 1 / 1.25) })
             Text("\(Int((model.visibleZoom * 100).rounded()))%")
                 .monospacedDigit()
                 .frame(minWidth: 33)
-                .accessibilityLabel("缩放 \(Int((model.visibleZoom * 100).rounded()))%")
-            IconButton("放大", icon: "plus", hint: "放大", action: { model.adjustZoom(by: 1.25) })
-            ActionButton("适合", icon: "arrow.up.left.and.arrow.down.right", hint: "适合窗口  0", kind: .quiet, action: model.fit)
+                .accessibilityLabel(language.text("缩放", "Zoom") + " \(Int((model.visibleZoom * 100).rounded()))%")
+            IconButton(language.text("放大", "Zoom In"), icon: "plus", hint: language.text("放大", "Zoom In"), action: { model.adjustZoom(by: 1.25) })
+            ActionButton(language.text("适合", "Fit"), icon: "arrow.up.left.and.arrow.down.right", hint: language.text("适合窗口  0", "Fit to window  0"), kind: .quiet, action: model.fit)
         }
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(Palette.secondary)
@@ -347,13 +348,13 @@ struct Workspace: View {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                 let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
                 guard let url else {
-                    DispatchQueue.main.async { model.notify("无法读取拖入的文件") }
+                    DispatchQueue.main.async { model.notify(language.text("无法读取拖入的文件", "Could not read the dropped file")) }
                     return
                 }
                 let image = ReviewImage.read(url)
                 DispatchQueue.main.async {
                     if let image { model.accept(image) }
-                    else { model.notify("无法打开拖入的图片") }
+                    else { model.notify(language.text("无法打开拖入的图片", "Could not open the dropped image")) }
                 }
             }
         } else {
@@ -361,11 +362,11 @@ struct Workspace: View {
                 UTType($0)?.conforms(to: .image) == true
             } ?? UTType.image.identifier
             provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
-                let name = provider.suggestedName ?? "拖入的图片"
+                let name = provider.suggestedName ?? language.text("拖入的图片", "Dropped image")
                 let image = data.flatMap { ReviewImage.read($0, name: name) }
                 DispatchQueue.main.async {
                     if let image { model.accept(image) }
-                    else { model.notify("无法读取拖入的图片") }
+                    else { model.notify(language.text("无法读取拖入的图片", "Could not read the dropped image")) }
                 }
             }
         }
@@ -375,19 +376,20 @@ struct Workspace: View {
 
 private struct AnnotationColorOptions: View {
     @Binding var selection: AnnotationAppearance
+    let language: AppLanguage
     @State private var hue: Double = 0
     @State private var saturation: Double = 0
     @State private var brightness: Double = 0
     @State private var hexInput = ""
 
-    private let presets: [(name: String, hex: UInt32)] = [
-        ("默认蓝", Ink.logoBlue), ("青色", 0x2BC6BC), ("绿色", 0x58C778),
-        ("橙色", 0xF9A14A), ("红色", 0xF16668), ("黑色", 0x202329)
-    ]
+    private var presets: [(name: String, hex: UInt32)] { [
+        (language.text("默认蓝", "Default blue"), Ink.logoBlue), (language.text("青色", "Teal"), 0x2BC6BC), (language.text("绿色", "Green"), 0x58C778),
+        (language.text("橙色", "Orange"), 0xF9A14A), (language.text("红色", "Red"), 0xF16668), (language.text("黑色", "Black"), 0x202329)
+    ] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("标注颜色").font(.system(size: 13, weight: .semibold))
+            Text(language.text("标注颜色", "Annotation Color")).font(.system(size: 13, weight: .semibold))
             HStack(spacing: 7) {
                 ForEach(presets, id: \.hex) { preset in
                     let appearance = AnnotationAppearance(preset.hex)
@@ -411,7 +413,7 @@ private struct AnnotationColorOptions: View {
                 }
             }
             Divider()
-            Text("自定义颜色").font(.system(size: 12, weight: .medium))
+            Text(language.text("自定义颜色", "Custom Color")).font(.system(size: 12, weight: .medium))
             colorField.frame(height: 100)
             hueTrack.frame(height: 14)
             HStack(spacing: 8) {
@@ -419,7 +421,7 @@ private struct AnnotationColorOptions: View {
                     .fill(Color(nsColor: selection.fill))
                     .overlay { Circle().strokeBorder(.black.opacity(0.15)) }
                     .frame(width: 20, height: 20)
-                TextField("色值", text: $hexInput)
+                TextField(language.text("色值", "Hex color"), text: $hexInput)
                     .font(.system(size: 12, design: .monospaced))
                     .textFieldStyle(.roundedBorder)
                     .onSubmit {
@@ -459,7 +461,7 @@ private struct AnnotationColorOptions: View {
                 applyComponents()
             })
         }
-        .accessibilityLabel("饱和度和亮度")
+        .accessibilityLabel(language.text("饱和度和亮度", "Saturation and brightness"))
     }
 
     private var hueTrack: some View {
@@ -480,7 +482,7 @@ private struct AnnotationColorOptions: View {
                 applyComponents()
             })
         }
-        .accessibilityLabel("色相")
+        .accessibilityLabel(language.text("色相", "Hue"))
         .accessibilityAdjustableAction { direction in
             hue = unitInterval(hue + (direction == .increment ? 0.025 : -0.025))
             applyComponents()
@@ -515,6 +517,7 @@ private struct AnnotationColorOptions: View {
 
 private struct NotesPanel: View {
     @ObservedObject var model: ReviewModel
+    private var language: AppLanguage { model.language }
     @FocusState private var focused: EditTarget?
 
     private struct EditTarget: Hashable {
@@ -525,10 +528,11 @@ private struct NotesPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
-                Text("反馈清单").font(.system(size: 16, weight: .semibold))
+                Text(language.text("反馈清单", "Feedback")).font(.system(size: 16, weight: .semibold))
                 Spacer()
                 Text(model.review.selectedIDs.count > 1
-                     ? "已选 \(model.review.selectedIDs.count) 条" : "\(model.review.marks.count) 条")
+                     ? language.text("已选 \(model.review.selectedIDs.count) 条", "\(model.review.selectedIDs.count) selected")
+                     : language.annotationCount(model.review.marks.count))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Palette.muted)
             }
@@ -538,8 +542,8 @@ private struct NotesPanel: View {
 
             if model.review.marks.isEmpty {
                 VStack(spacing: 10) {
-                    Text("还没有标注").font(.system(size: 14, weight: .semibold))
-                    Text("在图上添加标注，再写下希望怎么改")
+                    Text(language.text("还没有标注", "No annotations yet")).font(.system(size: 14, weight: .semibold))
+                    Text(language.text("在图上添加标注，再写下希望怎么改", "Mark a spot on the image and describe what to change"))
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.muted)
                         .multilineTextAlignment(.center)
@@ -594,7 +598,8 @@ private struct NotesPanel: View {
                             .frame(minWidth: 22, minHeight: 22)
                             .padding(.horizontal, number >= 100 ? 4 : 0)
                             .background(Color(nsColor: appearance.fill), in: RoundedRectangle(cornerRadius: 5))
-                        Text(selected ? "\(mark.tool.label)标注" : mark.summary)
+                        Text(selected ? language.text("\(mark.tool.label(in: language))标注", "\(mark.tool.label(in: language)) annotation")
+                                      : mark.summary(in: language))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(selected || mark.hasFeedback ? Palette.primary : Palette.muted)
                             .lineLimit(1)
@@ -609,10 +614,11 @@ private struct NotesPanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("标注 \(number)，\(mark.tool.label)，\(mark.summary)")
+                .accessibilityLabel(language.text("标注 \(number)，\(mark.tool.label(in: language))，\(mark.summary(in: language))",
+                                                  "Annotation \(number), \(mark.tool.label(in: language)), \(mark.summary(in: language))"))
 
                 if selected {
-                    IconButton("删除标注", icon: "trash", hint: "删除这条标注", action: model.removeSelected)
+                    IconButton(language.text("删除标注", "Delete Annotation"), icon: "trash", hint: language.text("删除这条标注", "Delete this annotation"), action: model.removeSelected)
                 }
             }
             .padding(.horizontal, 10)
@@ -620,7 +626,7 @@ private struct NotesPanel: View {
             if selected, let source = model.review.source {
                 HStack(spacing: 5) {
                     Image(systemName: "location").font(.system(size: 9, weight: .semibold))
-                    Text(mark.location(in: source.size))
+                    Text(mark.location(in: source.size, language: language))
                         .font(.system(size: 10.5, design: .monospaced))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -629,8 +635,8 @@ private struct NotesPanel: View {
                 .padding(.horizontal, 12).padding(.bottom, 12)
 
                 VStack(alignment: .leading, spacing: 11) {
-                    editor(mark, field: .problem, title: "当前问题", placeholder: "这里出了什么问题？")
-                    editor(mark, field: .desired, title: "期望调整", placeholder: "希望它变成什么样？")
+                    editor(mark, field: .problem, title: language.text("当前问题", "Current issue"), placeholder: language.text("这里出了什么问题？", "What is wrong here?"))
+                    editor(mark, field: .desired, title: language.text("期望调整", "Requested change"), placeholder: language.text("希望它变成什么样？", "What should change?"))
                 }
                 .padding(.horizontal, 10).padding(.bottom, 11)
             }
@@ -862,6 +868,7 @@ private struct ToolbarChoice: View {
 private struct ExportPreview: View {
     let review: Review
     let appearance: AnnotationAppearance
+    let language: AppLanguage
     @Environment(\.dismiss) private var dismiss
     @State private var phase = Phase.loading
     @State private var fitWidth = false
@@ -876,21 +883,21 @@ private struct ExportPreview: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("导出预览")
+                    Text(language.text("导出预览", "Export Preview"))
                         .font(.system(size: 16, weight: .semibold))
                     if case let .ready(image) = phase {
-                        Text(verbatim: "PNG  ·  \(image.width) × \(image.height) px  ·  \(review.marks.count) 条标注")
+                        Text(verbatim: "PNG  ·  \(image.width) × \(image.height) px  ·  \(language.annotationCount(review.marks.count))")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(Palette.muted)
                     }
                 }
                 Spacer()
                 if case .ready = phase {
-                    ActionButton(fitWidth ? "查看整张" : "适合宽度",
+                    ActionButton(fitWidth ? language.text("查看整张", "Fit to Window") : language.text("适合宽度", "Fit Width"),
                                  icon: fitWidth ? "arrow.down.right.and.arrow.up.left" : "arrow.left.and.right",
-                                 hint: "切换预览缩放", kind: .outline) { fitWidth.toggle() }
+                                 hint: language.text("切换预览缩放", "Change preview zoom"), kind: .outline) { fitWidth.toggle() }
                 }
-                ActionButton("关闭", icon: "xmark", hint: "关闭导出预览", kind: .quiet) { dismiss() }
+                ActionButton(language.text("关闭", "Close"), icon: "xmark", hint: language.text("关闭导出预览", "Close export preview"), kind: .quiet) { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 18)
@@ -900,7 +907,7 @@ private struct ExportPreview: View {
 
             switch phase {
             case .loading:
-                ProgressView("正在生成预览…")
+                ProgressView(language.text("正在生成预览…", "Rendering preview…"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .ready(let pixels):
                 if fitWidth {
@@ -921,7 +928,7 @@ private struct ExportPreview: View {
                     .padding(24)
                 }
             case .failure(let message):
-                ContentUnavailableView("预览失败", systemImage: "exclamationmark.circle", description: Text(message))
+                ContentUnavailableView(language.text("预览失败", "Could Not Preview"), systemImage: "exclamationmark.circle", description: Text(message))
             }
         }
         .frame(width: 750, height: 545)
@@ -929,18 +936,19 @@ private struct ExportPreview: View {
         .foregroundStyle(Palette.primary)
         .task {
             let result = await Task.detached(priority: .userInitiated) {
-                Result { try ImageExport.render(review, appearance: appearance) }
+                Result { try ImageExport.render(review, appearance: appearance, language: language) }
             }.value
             guard !Task.isCancelled else { return }
             switch result {
             case .success(let pixels): phase = .ready(pixels)
-            case .failure(let error): phase = .failure(error.localizedDescription)
+            case .failure(let error):
+                phase = .failure((error as? ImageExport.Failure)?.message(in: language) ?? error.localizedDescription)
             }
         }
     }
 
     private func previewImage(_ pixels: CGImage) -> some View {
-        Image(pixels, scale: 1, label: Text(review.hasFeedback ? "标注图片和反馈清单" : "标注图片"))
+        Image(pixels, scale: 1, label: Text(review.hasFeedback ? language.text("标注图片和反馈清单", "Annotated image and feedback") : language.text("标注图片", "Annotated image")))
             .resizable()
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)

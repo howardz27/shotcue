@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let model: ReviewModel
+    private var language: AppLanguage { model.language }
     private var editorWindow: NSWindow?
     private var captureProcess: Process?
     private var captureDirectory: URL?
@@ -66,8 +67,8 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func open() {
         guard let window = editorWindow, window.attachedSheet == nil else { return }
         let panel = NSOpenPanel()
-        panel.message = "选择要评审的截图或图片"
-        panel.prompt = "打开图片"
+        panel.message = language.text("选择要评审的截图或图片", "Choose an image or screenshot to review")
+        panel.prompt = language.text("打开图片", "Open Image")
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -77,7 +78,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc func openDemo() {
-        guard let (image, marks) = Demo.make() else { return }
+        guard let (image, marks) = Demo.make(in: language) else { return }
         model.accept(image, marks: marks)
     }
 
@@ -89,7 +90,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         } catch {
-            model.notify("无法创建临时截图文件")
+            model.notify(language.text("无法创建临时截图文件", "Could not create the temporary screenshot file"))
             return
         }
 
@@ -99,12 +100,13 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         process.standardOutput = FileHandle.nullDevice
         let errors = Pipe()
         process.standardError = errors
+        let screenshotPrefix = language.text("截图", "Screenshot")
         process.terminationHandler = { [weak self] _ in
             let error = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             let image = (try? Data(contentsOf: destination)).flatMap { data in
                 let date = Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)
                     .timeZone(separator: .omitted).timeSeparator(.omitted).dateSeparator(.dash))
-                return ReviewImage.read(data, name: "截图-\(date).png")
+                return ReviewImage.read(data, name: "\(screenshotPrefix)-\(date).png")
             }
             try? FileManager.default.removeItem(at: directory)
             DispatchQueue.main.async { [weak self] in
@@ -112,7 +114,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 finishCapture(hiddenWindow: hideWindow, didCapture: image != nil)
                 if let image { model.accept(image) }
                 else if !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    model.notify("截图未生成，请检查「屏幕录制」权限或粘贴系统截图")
+                    model.notify(language.text("截图未生成，请检查「屏幕录制」权限或粘贴系统截图", "Could not capture the screen. Check Screen Recording permission or paste a screenshot."))
                 }
             }
         }
@@ -126,7 +128,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 try? FileManager.default.removeItem(at: directory)
                 guard let self else { return }
                 finishCapture(hiddenWindow: hideWindow)
-                model.notify("无法启动系统截图")
+                model.notify(language.text("无法启动系统截图", "Could not start screen capture"))
             }
         }
     }
@@ -167,19 +169,19 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let request = copyRequest
         let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
-        renderPNG(review, appearance: model.annotationAppearance) { [weak self] data in
+        renderPNG(review, appearance: model.annotationAppearance, language: language) { [weak self] data in
             guard let self, copyRequest == request else { return }
             guard pasteboard.changeCount == changeCount else {
-                model.notify("剪贴板已有更新，请再次复制图片")
+                model.notify(language.text("剪贴板已有更新，请再次复制图片", "The clipboard has changed. Copy the image again."))
                 return
             }
             let item = NSPasteboardItem()
             item.setData(data, forType: .png)
             pasteboard.clearContents()
             if pasteboard.writeObjects([item]) {
-                model.notify(review.hasFeedback ? "已复制带标注和说明的 PNG" : "已复制 PNG 图片")
+                model.notify(review.hasFeedback ? language.text("已复制带标注和说明的 PNG", "Copied the PNG with annotations and feedback") : language.text("已复制 PNG 图片", "Copied the PNG"))
             } else {
-                model.notify("无法写入剪贴板")
+                model.notify(language.text("无法写入剪贴板", "Could not write to the clipboard"))
             }
         }
     }
@@ -189,10 +191,10 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         copyRequest += 1
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        if pasteboard.setString(model.review.markdown, forType: .string) {
-            model.notify("已复制反馈，可直接粘贴给 Agent")
+        if pasteboard.setString(model.review.markdown(in: language), forType: .string) {
+            model.notify(language.text("已复制反馈，可直接粘贴给 Agent", "Copied feedback to paste into your agent"))
         } else {
-            model.notify("无法写入剪贴板")
+            model.notify(language.text("无法写入剪贴板", "Could not write to the clipboard"))
         }
     }
 
@@ -203,25 +205,27 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func previewExport() {
         let review = model.review
         guard review.source != nil, model.exportPreview == nil, saveDialog == nil else { return }
-        model.exportPreview = ExportPreviewRequest(review: review, appearance: model.annotationAppearance)
+        model.exportPreview = ExportPreviewRequest(review: review, appearance: model.annotationAppearance, language: language)
     }
 
     @objc func saveImage() {
         let review = model.review
         guard let source = review.source else { return }
         let appearance = model.annotationAppearance
-        savePanel(type: .png, title: "保存标注图片", name: suggestedName(source, suffix: "-标注.png")) { [weak self] url in
-            self?.renderPNG(review, appearance: appearance) { data in self?.write(data, to: url) }
+        let language = model.language
+        savePanel(type: .png, title: language.text("保存标注图片", "Save Annotated Image"), name: suggestedName(source, suffix: language.text("-标注.png", "-annotated.png"))) { [weak self] url in
+            self?.renderPNG(review, appearance: appearance, language: language) { data in self?.write(data, to: url) }
         }
     }
 
     @objc func saveFeedback() {
         let review = model.review
         guard let source = review.source, !review.marks.isEmpty else { return }
-        savePanel(type: UTType(filenameExtension: "md") ?? .plainText, title: "保存 Markdown 反馈",
-                  name: suggestedName(source, suffix: "-反馈.md")) {
+        let language = model.language
+        savePanel(type: UTType(filenameExtension: "md") ?? .plainText, title: language.text("保存 Markdown 反馈", "Save Markdown Feedback"),
+                  name: suggestedName(source, suffix: language.text("-反馈.md", "-feedback.md"))) {
             [weak self] url in
-            self?.write(Data(review.markdown.utf8), to: url)
+            self?.write(Data(review.markdown(in: language).utf8), to: url)
         }
     }
 
@@ -229,15 +233,17 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         (source.name as NSString).deletingPathExtension + suffix
     }
 
-    private func renderPNG(_ review: Review, appearance: AnnotationAppearance, complete: @escaping (Data) -> Void) {
+    private func renderPNG(_ review: Review, appearance: AnnotationAppearance, language: AppLanguage,
+                           complete: @escaping (Data) -> Void) {
         guard review.source != nil else { return }
-        model.notify("正在生成 PNG…")
+        model.notify(language.text("正在生成 PNG…", "Rendering PNG…"))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try ImageExport.png(review, appearance: appearance) }
+            let result = Result { try ImageExport.png(review, appearance: appearance, language: language) }
             DispatchQueue.main.async { [weak self] in
                 switch result {
                 case .success(let data): complete(data)
-                case .failure(let error): self?.model.notify(error.localizedDescription)
+                case .failure(let error):
+                    self?.model.notify((error as? ImageExport.Failure)?.message(in: language) ?? error.localizedDescription)
                 }
             }
         }
@@ -247,12 +253,12 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = editorWindow, saveDialog == nil else { return }
             guard window.attachedSheet == nil else {
-                model.notify("请先关闭当前对话框")
+                model.notify(language.text("请先关闭当前对话框", "Close the current dialog first"))
                 return
             }
             let panel = NSSavePanel()
             panel.title = title
-            panel.prompt = "保存"
+            panel.prompt = language.text("保存", "Save")
             panel.allowedContentTypes = [type]
             panel.nameFieldStringValue = name
             panel.canCreateDirectories = true
@@ -265,7 +271,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 saveDialog = nil
                 guard result == .OK else { return }
                 if let url { complete(url) }
-                else { model.notify("未能获取保存位置，请重试") }
+                else { model.notify(language.text("未能获取保存位置，请重试", "Could not get the save location. Try again.")) }
             }
         }
     }
@@ -273,10 +279,18 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func write(_ data: Data, to url: URL) {
         do {
             try data.write(to: url, options: .atomic)
-            model.notify("已保存 \(url.lastPathComponent)")
+            model.notify(language.text("已保存 \(url.lastPathComponent)", "Saved \(url.lastPathComponent)"))
         } catch {
-            model.notify("保存失败：\(error.localizedDescription)")
+            model.notify(language.text("保存失败：\(error.localizedDescription)", "Could not save: \(error.localizedDescription)"))
         }
+    }
+
+    @objc private func changeLanguage(_ item: NSMenuItem) {
+        guard let rawValue = item.representedObject as? String,
+              let selection = AppLanguage(rawValue: rawValue), selection != language else { return }
+        model.language = selection
+        model.notice = ""
+        installMenus()
     }
 
     @objc func undo() { model.undo() }
@@ -289,6 +303,9 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
+        case #selector(changeLanguage(_:)):
+            item.state = item.representedObject as? String == language.rawValue ? .on : .off
+            return true
         case #selector(undo): return model.canUndo
         case #selector(redo): return model.canRedo
         case #selector(copyImage), #selector(fit), #selector(zoomIn), #selector(zoomOut):
@@ -327,48 +344,59 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         let app = menu("ShotCue")
-        add(app, "关于 ShotCue", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        add(app, language.text("关于 ShotCue", "About ShotCue"), #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        let languages = NSMenu(title: "Language / 语言")
+        for option in AppLanguage.allCases {
+            let item = NSMenuItem(title: option.name, action: #selector(changeLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.rawValue
+            item.state = option == language ? .on : .off
+            languages.addItem(item)
+        }
+        let languageItem = NSMenuItem(title: languages.title, action: nil, keyEquivalent: "")
+        languageItem.submenu = languages
+        app.addItem(languageItem)
         app.addItem(.separator())
-        add(app, "隐藏 ShotCue", #selector(NSApplication.hide(_:)), "h")
-        add(app, "退出 ShotCue", #selector(NSApplication.terminate(_:)), "q")
+        add(app, language.text("隐藏 ShotCue", "Hide ShotCue"), #selector(NSApplication.hide(_:)), "h")
+        add(app, language.text("退出 ShotCue", "Quit ShotCue"), #selector(NSApplication.terminate(_:)), "q")
 
-        let file = menu("文件")
-        add(file, "打开图片…", #selector(open), "o", target: self)
-        add(file, "截取屏幕区域…", #selector(capture), "s", modifiers: [.command, .shift], target: self)
-        add(file, "截图时隐藏 ShotCue 窗口", #selector(toggleCaptureWindowVisibility), target: self)
+        let file = menu(language.text("文件", "File"))
+        add(file, language.text("打开图片…", "Open Image…"), #selector(open), "o", target: self)
+        add(file, language.text("截取屏幕区域…", "Capture Screen Area…"), #selector(capture), "s", modifiers: [.command, .shift], target: self)
+        add(file, language.text("截图时隐藏 ShotCue 窗口", "Hide ShotCue during capture"), #selector(toggleCaptureWindowVisibility), target: self)
         file.addItem(.separator())
-        add(file, "预览导出图片…", #selector(previewExport), "y", target: self)
-        add(file, "保存标注图片…", #selector(saveImage), "s", target: self)
-        add(file, "保存 Markdown 反馈…", #selector(saveFeedback), target: self)
+        add(file, language.text("预览导出图片…", "Preview Export…"), #selector(previewExport), "y", target: self)
+        add(file, language.text("保存标注图片…", "Save Annotated Image…"), #selector(saveImage), "s", target: self)
+        add(file, language.text("保存 Markdown 反馈…", "Save Markdown Feedback…"), #selector(saveFeedback), target: self)
         file.addItem(.separator())
-        add(file, "关闭窗口", #selector(NSWindow.performClose(_:)), "w")
+        add(file, language.text("关闭窗口", "Close Window"), #selector(NSWindow.performClose(_:)), "w")
 
-        let edit = menu("编辑")
-        add(edit, "撤销", #selector(undo), "z", target: self)
-        add(edit, "重做", #selector(redo), "z", modifiers: [.command, .shift], target: self)
+        let edit = menu(language.text("编辑", "Edit"))
+        add(edit, language.text("撤销", "Undo"), #selector(undo), "z", target: self)
+        add(edit, language.text("重做", "Redo"), #selector(redo), "z", modifiers: [.command, .shift], target: self)
         edit.addItem(.separator())
-        add(edit, "剪切", #selector(NSText.cut(_:)), "x")
-        add(edit, "复制", #selector(NSText.copy(_:)), "c")
-        add(edit, "粘贴", #selector(paste), "v", target: self)
-        add(edit, "全选", #selector(NSText.selectAll(_:)), "a")
+        add(edit, language.text("剪切", "Cut"), #selector(NSText.cut(_:)), "x")
+        add(edit, language.text("复制", "Copy"), #selector(NSText.copy(_:)), "c")
+        add(edit, language.text("粘贴", "Paste"), #selector(paste), "v", target: self)
+        add(edit, language.text("全选", "Select All"), #selector(NSText.selectAll(_:)), "a")
         edit.addItem(.separator())
-        add(edit, "粘贴图片", #selector(pasteImage), "v", modifiers: [.command, .option], target: self)
-        add(edit, "复制标注图片", #selector(copyImage), "c", modifiers: [.command, .option], target: self)
-        add(edit, "复制给 Agent 的反馈", #selector(copyFeedback), "c", modifiers: [.command, .shift], target: self)
-        add(edit, "删除所选标注", #selector(deleteMark), target: self)
-        add(edit, "全选标注", #selector(selectAllMarks), "a", modifiers: [.control], target: self)
+        add(edit, language.text("粘贴图片", "Paste Image"), #selector(pasteImage), "v", modifiers: [.command, .option], target: self)
+        add(edit, language.text("复制标注图片", "Copy Annotated Image"), #selector(copyImage), "c", modifiers: [.command, .option], target: self)
+        add(edit, language.text("复制给 Agent 的反馈", "Copy Feedback for Agent"), #selector(copyFeedback), "c", modifiers: [.command, .shift], target: self)
+        add(edit, language.text("删除所选标注", "Delete Selected Annotations"), #selector(deleteMark), target: self)
+        add(edit, language.text("全选标注", "Select All Annotations"), #selector(selectAllMarks), "a", modifiers: [.control], target: self)
 
-        let view = menu("显示")
-        add(view, "标注颜色…", #selector(chooseAnnotationColor), target: self)
+        let view = menu(language.text("显示", "View"))
+        add(view, language.text("标注颜色…", "Annotation Color…"), #selector(chooseAnnotationColor), target: self)
         view.addItem(.separator())
-        add(view, "适合窗口", #selector(fit), "0", target: self)
-        add(view, "放大", #selector(zoomIn), "=", target: self)
-        add(view, "缩小", #selector(zoomOut), "-", target: self)
+        add(view, language.text("适合窗口", "Fit to Window"), #selector(fit), "0", target: self)
+        add(view, language.text("放大", "Zoom In"), #selector(zoomIn), "=", target: self)
+        add(view, language.text("缩小", "Zoom Out"), #selector(zoomOut), "-", target: self)
         view.addItem(.separator())
-        add(view, "进入或退出全屏", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control])
+        add(view, language.text("进入或退出全屏", "Toggle Full Screen"), #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control])
 
-        let help = menu("帮助")
-        add(help, "打开评审示例", #selector(openDemo), target: self)
+        let help = menu(language.text("帮助", "Help"))
+        add(help, language.text("打开评审示例", "Open Sample Review"), #selector(openDemo), target: self)
         NSApp.helpMenu = help
         NSApp.mainMenu = root
     }

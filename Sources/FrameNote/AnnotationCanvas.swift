@@ -6,7 +6,6 @@ struct AnnotationCanvas: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MarkCanvas {
         let canvas = MarkCanvas()
-        canvas.setAccessibilityLabel("截图标注画布")
         return canvas
     }
 
@@ -81,6 +80,7 @@ final class MarkCanvas: NSView {
 
     func update(from model: ReviewModel) {
         self.model = model
+        setAccessibilityLabel(model.language.text("截图标注画布", "Screenshot annotation canvas"))
         let incoming = model.review.source?.id
         if sourceID != incoming || viewportReset != model.viewportReset {
             sourceID = incoming
@@ -298,7 +298,7 @@ final class MarkCanvas: NSView {
             } else if tool == .arrow && hypot(end.x - start.x, end.y - start.y) * scale >= 8 {
                 model.add(tool, start: start, end: end)
             } else {
-                model.notify(tool.instruction)
+                model.notify(tool.instruction(in: model.language))
             }
         case let .move(_, original, offset):
             model.updatePositions(original.map { $0.translated(by: offset) })

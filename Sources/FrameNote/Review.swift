@@ -6,11 +6,11 @@ import UniformTypeIdentifiers
 enum MarkTool: String, CaseIterable, Codable {
     case pin, region, arrow
 
-    var label: String {
+    func label(in language: AppLanguage) -> String {
         switch self {
-        case .pin: "点"
-        case .region: "框"
-        case .arrow: "箭头"
+        case .pin: language.text("点", "Pin")
+        case .region: language.text("框", "Box")
+        case .arrow: language.text("箭头", "Arrow")
         }
     }
 
@@ -30,11 +30,11 @@ enum MarkTool: String, CaseIterable, Codable {
         }
     }
 
-    var instruction: String {
+    func instruction(in language: AppLanguage) -> String {
         switch self {
-        case .pin: "点击要说明的位置"
-        case .region: "拖动选中要说明的区域"
-        case .arrow: "从起点拖向要指出的位置"
+        case .pin: language.text("点击要说明的位置", "Click to place a pin")
+        case .region: language.text("拖动选中要说明的区域", "Drag to draw a box")
+        case .arrow: language.text("从起点拖向要指出的位置", "Drag to draw an arrow")
         }
     }
 }
@@ -72,14 +72,14 @@ struct Mark: Codable, Identifiable, Equatable {
                width: abs(start.x - end.x), height: abs(start.y - end.y))
     }
 
-    var summary: String {
+    func summary(in language: AppLanguage) -> String {
         for value in [problem, desired] {
             if let line = value.split(whereSeparator: \.isNewline)
                 .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty }) {
                 return line
             }
         }
-        return "待填写说明"
+        return language.text("待填写说明", "Add feedback")
     }
 
     static func constrainedOffset(_ proposed: CGSize, for marks: [Mark], within size: CGSize) -> CGSize {
@@ -97,7 +97,7 @@ struct Mark: Codable, Identifiable, Equatable {
         return result
     }
 
-    func location(in size: CGSize) -> String {
+    func location(in size: CGSize, language: AppLanguage) -> String {
         func coordinates(_ position: CGPoint) -> String {
             "(\(Int(position.x.rounded())), \(Int(position.y.rounded())))"
         }
@@ -106,11 +106,15 @@ struct Mark: Codable, Identifiable, Equatable {
             let p = start.point
             let x = Int((p.x / size.width * 100).rounded())
             let y = Int((p.y / size.height * 100).rounded())
-            return "点 \(coordinates(p)) · 距左 \(x)%、距顶 \(y)%"
+            return language.text("点 \(coordinates(p)) · 距左 \(x)%、距顶 \(y)%",
+                                 "Pin \(coordinates(p)) · \(x)% from left, \(y)% from top")
         case .region:
-            return "区域左上 \(coordinates(bounds.origin)) · 宽 \(Int(bounds.width.rounded())) × 高 \(Int(bounds.height.rounded()))"
+            let width = Int(bounds.width.rounded())
+            let height = Int(bounds.height.rounded())
+            return language.text("区域左上 \(coordinates(bounds.origin)) · 宽 \(width) × 高 \(height)",
+                                 "Box top-left \(coordinates(bounds.origin)) · \(width) × \(height) px")
         case .arrow:
-            return "箭头 \(coordinates(start.point)) → \(coordinates(end.point))"
+            return "\(tool.label(in: language)) \(coordinates(start.point)) → \(coordinates(end.point))"
         }
     }
 }
@@ -150,13 +154,14 @@ struct ReviewImage: Identifiable {
         return read(data, name: url.lastPathComponent)
     }
 
-    static func paste(from pasteboard: NSPasteboard) -> Self? {
+    static func paste(from pasteboard: NSPasteboard, language: AppLanguage = .chinese) -> Self? {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            let result = urls.lazy.compactMap({ read($0) }).first {
             return result
         }
         for type: NSPasteboard.PasteboardType in [.png, .tiff, .init(UTType.jpeg.identifier), .init(UTType.heic.identifier)] {
-            if let data = pasteboard.data(forType: type), let result = read(data, name: "剪贴板图片.png") {
+            if let data = pasteboard.data(forType: type),
+               let result = read(data, name: language.text("剪贴板图片.png", "Clipboard image.png")) {
                 return result
             }
         }
@@ -173,23 +178,25 @@ struct Review {
     var selectedID: UUID? { selectedIDs.count == 1 ? selectedIDs.first : nil }
     var hasFeedback: Bool { marks.contains(where: \.hasFeedback) }
 
-    var markdown: String {
+    func markdown(in language: AppLanguage = .chinese) -> String {
         guard let source else { return "" }
         let filename = source.name.replacingOccurrences(of: "\n", with: " ")
         var lines = [
-            "# 截图评审 · \(filename)",
+            "# \(language.text("截图评审", "Screenshot review")) · \(filename)",
             "",
-            "原图尺寸为 \(source.image.width) × \(source.image.height) px，坐标原点在原图左上角。请按截图中的编号逐项处理，并说明每项改动。",
+            language.text("原图尺寸为 \(source.image.width) × \(source.image.height) px，坐标原点在原图左上角。请按截图中的编号逐项处理，并说明每项改动。",
+                          "Original image: \(source.image.width) × \(source.image.height) px. Coordinates start at the top-left. Address each numbered annotation and describe the changes."),
             ""
         ]
         for mark in marks {
-            lines += ["## \(mark.number). \(mark.location(in: source.size))", ""]
-            for (label, value) in [("当前问题", mark.problem), ("期望调整", mark.desired)] {
+            lines += ["## \(mark.number). \(mark.location(in: source.size, language: language))", ""]
+            for (label, value) in [(language.text("当前问题", "Current issue"), mark.problem),
+                                   (language.text("期望调整", "Requested change"), mark.desired)] {
                 let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !cleaned.isEmpty { lines += ["**\(label)**", "", cleaned, ""] }
             }
             if !mark.hasFeedback {
-                lines += ["（说明待填写）", ""]
+                lines += [language.text("（说明待填写）", "(No written feedback yet)"), ""]
             }
         }
         return lines.joined(separator: "\n")
@@ -275,14 +282,19 @@ struct ExportPreviewRequest: Identifiable {
     let id = UUID()
     let review: Review
     let appearance: AnnotationAppearance
+    let language: AppLanguage
 }
 
 final class ReviewModel: ObservableObject {
     private static let hideWindowKey = "hideWindowDuringCapture"
     private static let annotationColorKey = "annotationColor"
+    private static let languageKey = "appLanguage"
     private static let defaultTool: MarkTool = .region
 
     @Published var review: Review { didSet { store.schedule(review) } }
+    @Published var language: AppLanguage {
+        didSet { preferences.set(language.rawValue, forKey: Self.languageKey) }
+    }
     @Published var tool: MarkTool? = ReviewModel.defaultTool
     @Published var showAnnotationColors = false
     @Published var zoom: Double?
@@ -311,6 +323,7 @@ final class ReviewModel: ObservableObject {
         self.store = store
         self.preferences = preferences
         review = store.load()
+        language = preferences.string(forKey: Self.languageKey).flatMap(AppLanguage.init(rawValue:)) ?? .chinese
         let savedColor = preferences.object(forKey: Self.annotationColorKey) as? Int ?? Int(Ink.logoBlue)
         annotationAppearance = AnnotationAppearance((0...0xFFFFFF).contains(savedColor) ? UInt32(savedColor) : Ink.logoBlue)
         hideWindowDuringCapture = preferences.object(forKey: Self.hideWindowKey) as? Bool ?? true
@@ -344,15 +357,15 @@ final class ReviewModel: ObservableObject {
 
     func open(_ url: URL) {
         guard let asset = ReviewImage.read(url) else {
-            notify("无法打开这张图片")
+            notify(language.text("无法打开这张图片", "Could not open this image"))
             return
         }
         accept(asset)
     }
 
     func paste() {
-        guard let image = ReviewImage.paste(from: .general) else {
-            notify("剪贴板里没有可打开的图片")
+        guard let image = ReviewImage.paste(from: .general, language: language) else {
+            notify(language.text("剪贴板里没有可打开的图片", "The clipboard does not contain an image"))
             return
         }
         accept(image)

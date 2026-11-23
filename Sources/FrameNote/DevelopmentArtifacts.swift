@@ -95,6 +95,24 @@ enum DevelopmentArtifacts {
         let store = ReviewStore(directory: directory.appending(path: "draft"))
         let model = ReviewModel(store: store, preferences: preferences)
         try check(model.annotationAppearance.hex == Ink.logoBlue, "Default annotation blue differs from the icon")
+        try check(model.language == .chinese, "Expected Chinese as the default language")
+        model.language = .english
+        try check(ReviewModel(store: store, preferences: preferences).language == .english,
+                  "Selected language was not restored")
+        guard let (englishSource, englishMarks) = Demo.make(in: .english) else {
+            throw VerificationError("Could not create the English sample")
+        }
+        model.accept(englishSource, marks: englishMarks)
+        let englishMarkdown = model.review.markdown(in: model.language)
+        try check(englishSource.name == "Workspace review sample.png" &&
+                  englishMarkdown.contains("# Screenshot review") &&
+                  englishMarkdown.contains("## 1. Box top-left") &&
+                  englishMarkdown.contains("**Requested change**") &&
+                  englishMarkdown.range(of: "\\p{Han}", options: .regularExpression) == nil,
+                  "English sample and exported feedback were not fully localized")
+        let englishPNG = try ImageExport.png(model.review, language: model.language)
+        try englishPNG.write(to: directory.appending(path: "english-feedback.png"))
+        model.language = .chinese
         model.annotationAppearance = AnnotationAppearance(0xF16668)
         try check(ReviewModel(store: store, preferences: preferences).annotationAppearance == model.annotationAppearance,
                   "Annotation color was not restored")
@@ -112,8 +130,8 @@ enum DevelopmentArtifacts {
         try check(model.review.marks.count == 2, "Delete count mismatch")
         model.undo()
         try check(model.review.marks.count == 3, "Undo did not restore the deleted mark")
-        try check(model.review.markdown.contains("## 3. 点 (52, 91)"), "Markdown coordinates are missing")
-        try check(model.review.markdown.contains(longNote.trimmingCharacters(in: .whitespaces)), "Markdown lost a long note")
+        try check(model.review.markdown().contains("## 3. 点 (52, 91)"), "Markdown coordinates are missing")
+        try check(model.review.markdown().contains(longNote.trimmingCharacters(in: .whitespaces)), "Markdown lost a long note")
 
         let data = try ImageExport.png(model.review)
         guard let decoded = ReviewImage.read(data, name: "marked.png") else {
@@ -121,7 +139,7 @@ enum DevelopmentArtifacts {
         }
         try check(decoded.image.width == 1120 && decoded.image.height > 1100, "PNG note layout has invalid dimensions")
         try data.write(to: directory.appending(path: "示例-标注.png"))
-        try Data(model.review.markdown.utf8).write(to: directory.appending(path: "示例-反馈.md"))
+        try Data(model.review.markdown().utf8).write(to: directory.appending(path: "示例-反馈.md"))
         try ImageExport.pngData(source.image).write(to: directory.appending(path: "示例-原图.png"))
 
         var blankNotes = model.review

@@ -21,10 +21,19 @@ struct Workspace: View {
     @State private var dropTarget = false
     @State private var showCaptureOptions = false
     @State private var showSaveOptions = false
+    @State private var showLanguageOptions = false
 
     private var accent: Color { Color(nsColor: model.annotationAppearance.textAccent) }
 
     var body: some View {
+        if model.chosenLanguage == nil {
+            LanguageWelcome(choose: actions.chooseLanguage)
+        } else {
+            editor
+        }
+    }
+
+    private var editor: some View {
         VStack(spacing: 0) {
             toolbar
             HStack(spacing: 0) {
@@ -48,7 +57,8 @@ struct Workspace: View {
 
     private var toolbar: some View {
         GeometryReader { geometry in
-            toolbarContent(compact: geometry.size.width < (language == .english ? 1240 : 1110))
+            toolbarContent(compact: geometry.size.width < (language == .english ? 1360 : 1210),
+                           iconOnlyImport: geometry.size.width < 1000)
                 .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .frame(height: 52)
@@ -56,7 +66,7 @@ struct Workspace: View {
         .overlay(alignment: .bottom) { rule.allowsHitTesting(false) }
     }
 
-    private func toolbarContent(compact: Bool) -> some View {
+    private func toolbarContent(compact: Bool, iconOnlyImport: Bool) -> some View {
         let hasImage = model.review.source != nil
         return HStack(spacing: compact ? 6 : 9) {
             HStack(spacing: 8) {
@@ -69,15 +79,17 @@ struct Workspace: View {
                     .tracking(-0.45)
             }
             .fixedSize()
-            .padding(.trailing, 4)
+
+            languageButton
 
             Rectangle().fill(Palette.line).frame(width: 1, height: 17)
                 .padding(.trailing, 3)
 
             HStack(spacing: 0) {
-                ActionButton(language.text("打开", "Open"), icon: "folder", hint: language.text("打开图片  ⌘O", "Open image  ⌘O"), kind: .quiet, action: actions.open)
+                toolbarUtility(language.text("打开", "Open"), icon: "folder", hint: language.text("打开图片  ⌘O", "Open image  ⌘O"),
+                               compact: iconOnlyImport, action: actions.open)
                 toolbarUtility(language.text("粘贴", "Paste"), icon: "doc.on.clipboard", hint: language.text("粘贴图片  ⌘V", "Paste image  ⌘V"), compact: compact, action: model.paste)
-                captureControls
+                captureControls(iconOnly: iconOnlyImport)
             }
             .fixedSize()
 
@@ -146,6 +158,30 @@ struct Workspace: View {
         .padding(.trailing, 13)
     }
 
+    private var languageButton: some View {
+        ActionButton(language.text("语言", "Language"), icon: "globe",
+                     hint: language.text("切换界面语言", "Change interface language"), kind: .outline, showsMenu: true) {
+            showLanguageOptions.toggle()
+        }
+        .fixedSize()
+        .accessibilityValue(language.name)
+        .accessibilityIdentifier("workspace-language")
+        .popover(isPresented: $showLanguageOptions, arrowEdge: .bottom) {
+            VStack(spacing: 3) {
+                ForEach(AppLanguage.allCases, id: \.self) { option in
+                    ToolbarChoice(option.name, icon: option == language ? "checkmark" : nil) {
+                        showLanguageOptions = false
+                        actions.chooseLanguage(option)
+                    }
+                    .accessibilityAddTraits(option == language ? .isSelected : [])
+                    .accessibilityIdentifier("workspace-language-\(option.rawValue)")
+                }
+            }
+            .padding(6)
+            .frame(width: 146)
+        }
+    }
+
     @ViewBuilder
     private func toolbarUtility(_ title: String, icon: String, hint: String, compact: Bool, action: @escaping () -> Void) -> some View {
         if compact {
@@ -185,9 +221,11 @@ struct Workspace: View {
         }
     }
 
-    private var captureControls: some View {
+    private func captureControls(iconOnly: Bool) -> some View {
         HStack(spacing: 0) {
-            ActionButton(language.text("截图", "Capture"), icon: "camera.viewfinder", hint: language.text("截取屏幕区域  ⌘⇧S", "Capture a screen area  ⌘⇧S"), kind: .quiet, action: actions.capture)
+            toolbarUtility(language.text("截图", "Capture"), icon: "camera.viewfinder",
+                           hint: language.text("截取屏幕区域  ⌘⇧S", "Capture a screen area  ⌘⇧S"),
+                           compact: iconOnly, action: actions.capture)
             IconButton(language.text("截图设置", "Capture Settings"), icon: "chevron.down", hint: language.text("设置截图时是否隐藏窗口", "Choose whether to hide ShotCue during capture")) {
                 showCaptureOptions.toggle()
             }
@@ -371,6 +409,58 @@ struct Workspace: View {
             }
         }
         return true
+    }
+}
+
+private struct LanguageWelcome: View {
+    let choose: (AppLanguage) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 76, height: 76)
+                .accessibilityHidden(true)
+                .padding(.bottom, 8)
+            Text("ShotCue")
+                .font(.system(size: 16, weight: .semibold))
+                .padding(.bottom, 25)
+            Text("选择界面语言")
+                .font(.system(size: 26, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+                .padding(.bottom, 5)
+            Text("Choose your language")
+                .font(.system(size: 15))
+                .foregroundStyle(Palette.muted)
+                .padding(.bottom, 24)
+            VStack(spacing: 8) {
+                ForEach(AppLanguage.allCases, id: \.self) { option in
+                    Button { choose(option) } label: {
+                        HStack {
+                            Text(option.name).font(.system(size: 14, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Palette.muted)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(width: 264, height: 43)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(HoverButton(kind: .outline))
+                    .accessibilityIdentifier("welcome-language-\(option.rawValue)")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(Palette.primary)
+        .background(Palette.board)
+        .overlay(alignment: .top) {
+            WindowDragArea().frame(height: 44).padding(.leading, 82)
+        }
+        .preferredColorScheme(.light)
     }
 }
 
@@ -838,10 +928,10 @@ private struct WindowDragArea: NSViewRepresentable {
 
 private struct ToolbarChoice: View {
     let title: String
-    let icon: String
+    let icon: String?
     let action: () -> Void
 
-    init(_ title: String, icon: String, action: @escaping () -> Void) {
+    init(_ title: String, icon: String?, action: @escaping () -> Void) {
         self.title = title
         self.icon = icon
         self.action = action
@@ -849,11 +939,13 @@ private struct ToolbarChoice: View {
 
     var body: some View {
         Button(action: action) {
-            Label {
+            HStack(spacing: 8) {
+                Color.clear.frame(width: 16, height: 16)
+                    .overlay {
+                        if let icon { Image(systemName: icon) }
+                    }
+                    .accessibilityHidden(true)
                 Text(title)
-            } icon: {
-                Image(systemName: icon)
-                    .frame(width: 16)
             }
             .font(.system(size: 13, weight: .medium))
             .frame(maxWidth: .infinity, alignment: .leading)

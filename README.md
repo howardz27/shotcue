@@ -13,7 +13,7 @@
 
 [下载 ShotCue](https://github.com/howardz27/shotcue/releases/latest/download/ShotCue-macOS-arm64.zip)
 
-当前下载包适用于 Apple Silicon Mac，要求 macOS 14 或更新版本。解压 ZIP 后，把 `ShotCue.app` 拖到「应用程序」文件夹，再双击打开。
+当前下载包适用于 Apple Silicon Mac，要求 macOS 14 或更新版本。解压 ZIP 后，把 `ShotCue.app` 拖到「应用程序」文件夹，再双击打开。首次打开时，先选择「简体中文」或「English」。
 
 当前版本使用临时签名，尚未经过 Apple 公证。如果首次启动被 macOS 拦截，确认文件来自本仓库的 Release 后，可在「系统设置 → 隐私与安全性」中选择「仍要打开」。[Apple 的首次打开说明](https://support.apple.com/en-us/102445)
 
@@ -26,7 +26,7 @@
 - **选择和调整**。指针支持点击、拖框多选和全选，可整组移动标注。拖动单选标注的控制点可以调整范围或方向。
 - **自定义颜色**。工具栏的色点可展开下拉面板，支持预设色、拖动取色和十六进制色值。
 - **交给 Agent**。预览、复制或保存带编号的 PNG，也可以复制带原图像素坐标的 Markdown。有文字时，PNG 会附上反馈清单。所有说明都留空时，导出保留原图尺寸和图上的标记。
-- **中英文切换**。在菜单栏选择「ShotCue → Language / 语言 → English 或简体中文」。语言立即生效，应用会记住选择，导出说明也使用所选语言。
+- **中英文切换**。点击窗口左上角 ShotCue 旁的「语言 / Language」按钮，随时切换。语言立即生效，应用会记住选择，导出说明也使用所选语言。
 
 ShotCue 可离线使用，最近一次评审会作为草稿保存在本机。
 

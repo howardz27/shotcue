@@ -95,10 +95,13 @@ enum DevelopmentArtifacts {
         let store = ReviewStore(directory: directory.appending(path: "draft"))
         let model = ReviewModel(store: store, preferences: preferences)
         try check(model.annotationAppearance.hex == Ink.logoBlue, "Default annotation blue differs from the icon")
-        try check(model.language == .chinese, "Expected Chinese as the default language")
-        model.language = .english
-        try check(ReviewModel(store: store, preferences: preferences).language == .english,
-                  "Selected language was not restored")
+        try check(model.chosenLanguage == nil, "A fresh installation should prompt for a language")
+        model.chooseLanguage(.chinese)
+        try check(ReviewModel(store: store, preferences: preferences).chosenLanguage == .chinese,
+                  "The first-run Chinese selection was not restored")
+        model.chooseLanguage(.english)
+        try check(ReviewModel(store: store, preferences: preferences).chosenLanguage == .english,
+                  "The switch to English was not restored")
         guard let (englishSource, englishMarks) = Demo.make(in: .english) else {
             throw VerificationError("Could not create the English sample")
         }
@@ -112,7 +115,7 @@ enum DevelopmentArtifacts {
                   "English sample and exported feedback were not fully localized")
         let englishPNG = try ImageExport.png(model.review, language: model.language)
         try englishPNG.write(to: directory.appending(path: "english-feedback.png"))
-        model.language = .chinese
+        model.chooseLanguage(.chinese)
         model.annotationAppearance = AnnotationAppearance(0xF16668)
         try check(ReviewModel(store: store, preferences: preferences).annotationAppearance == model.annotationAppearance,
                   "Annotation color was not restored")

@@ -39,16 +39,24 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         window.setFrameAutosaveName("FrameNoteWorkspace")
 
         editorWindow = window
-        if let pendingURL { model.open(pendingURL); self.pendingURL = nil }
-        if CommandLine.arguments.contains("--demo"), model.review.source == nil { openDemo() }
+        if model.chosenLanguage != nil { loadLaunchContent() }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func loadLaunchContent() {
+        if let pendingURL {
+            self.pendingURL = nil
+            model.open(pendingURL)
+        } else if CommandLine.arguments.contains("--demo"), model.review.source == nil {
+            openDemo()
+        }
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         guard let filename = filenames.first else { sender.reply(toOpenOrPrint: .failure); return }
         let url = URL(fileURLWithPath: filename)
-        if editorWindow == nil { pendingURL = url }
+        if editorWindow == nil || model.chosenLanguage == nil { pendingURL = url }
         else { model.open(url); editorWindow?.makeKeyAndOrderFront(nil) }
         sender.reply(toOpenOrPrint: .success)
     }
@@ -287,10 +295,16 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func changeLanguage(_ item: NSMenuItem) {
         guard let rawValue = item.representedObject as? String,
-              let selection = AppLanguage(rawValue: rawValue), selection != language else { return }
-        model.language = selection
-        model.notice = ""
+              let selection = AppLanguage(rawValue: rawValue) else { return }
+        chooseLanguage(selection)
+    }
+
+    func chooseLanguage(_ selection: AppLanguage) {
+        let previous = model.chosenLanguage
+        guard previous != selection else { return }
+        model.chooseLanguage(selection)
         installMenus()
+        if previous == nil { loadLaunchContent() }
     }
 
     @objc func undo() { model.undo() }
@@ -304,7 +318,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(changeLanguage(_:)):
-            item.state = item.representedObject as? String == language.rawValue ? .on : .off
+            item.state = model.chosenLanguage?.rawValue == item.representedObject as? String ? .on : .off
             return true
         case #selector(undo): return model.canUndo
         case #selector(redo): return model.canRedo
@@ -350,7 +364,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let item = NSMenuItem(title: option.name, action: #selector(changeLanguage(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = option.rawValue
-            item.state = option == language ? .on : .off
+            item.state = option == model.chosenLanguage ? .on : .off
             languages.addItem(item)
         }
         let languageItem = NSMenuItem(title: languages.title, action: nil, keyEquivalent: "")
@@ -359,6 +373,11 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.addItem(.separator())
         add(app, language.text("隐藏 ShotCue", "Hide ShotCue"), #selector(NSApplication.hide(_:)), "h")
         add(app, language.text("退出 ShotCue", "Quit ShotCue"), #selector(NSApplication.terminate(_:)), "q")
+
+        guard model.chosenLanguage != nil else {
+            NSApp.mainMenu = root
+            return
+        }
 
         let file = menu(language.text("文件", "File"))
         add(file, language.text("打开图片…", "Open Image…"), #selector(open), "o", target: self)

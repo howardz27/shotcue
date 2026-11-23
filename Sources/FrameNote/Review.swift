@@ -292,8 +292,8 @@ final class ReviewModel: ObservableObject {
     private static let defaultTool: MarkTool = .region
 
     @Published var review: Review { didSet { store.schedule(review) } }
-    @Published var language: AppLanguage {
-        didSet { preferences.set(language.rawValue, forKey: Self.languageKey) }
+    @Published private(set) var chosenLanguage: AppLanguage? {
+        didSet { preferences.set(chosenLanguage?.rawValue, forKey: Self.languageKey) }
     }
     @Published var tool: MarkTool? = ReviewModel.defaultTool
     @Published var showAnnotationColors = false
@@ -323,15 +323,22 @@ final class ReviewModel: ObservableObject {
         self.store = store
         self.preferences = preferences
         review = store.load()
-        language = preferences.string(forKey: Self.languageKey).flatMap(AppLanguage.init(rawValue:)) ?? .chinese
+        chosenLanguage = preferences.string(forKey: Self.languageKey).flatMap(AppLanguage.init(rawValue:))
         let savedColor = preferences.object(forKey: Self.annotationColorKey) as? Int ?? Int(Ink.logoBlue)
         annotationAppearance = AnnotationAppearance((0...0xFFFFFF).contains(savedColor) ? UInt32(savedColor) : Ink.logoBlue)
         hideWindowDuringCapture = preferences.object(forKey: Self.hideWindowKey) as? Bool ?? true
     }
 
+    var language: AppLanguage { chosenLanguage ?? .chinese }
     var selectedMark: Mark? { review.marks.first { $0.id == review.selectedID } }
     var canUndo: Bool { !past.isEmpty }
     var canRedo: Bool { !future.isEmpty }
+
+    func chooseLanguage(_ language: AppLanguage) {
+        chosenLanguage = language
+        noticeTask?.cancel()
+        notice = ""
+    }
 
     func notify(_ message: String) {
         noticeTask?.cancel()

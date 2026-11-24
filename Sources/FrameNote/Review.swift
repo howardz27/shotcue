@@ -4,13 +4,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum MarkTool: String, CaseIterable, Codable {
-    case pin, region, arrow
+    case pin, region, arrow, lasso, brush
 
     func label(in language: AppLanguage) -> String {
         switch self {
         case .pin: language.text("点", "Pin")
         case .region: language.text("框", "Box")
         case .arrow: language.text("箭头", "Arrow")
+        case .lasso: language.text("圈选", "Lasso")
+        case .brush: language.text("涂抹", "Brush")
         }
     }
 
@@ -19,6 +21,8 @@ enum MarkTool: String, CaseIterable, Codable {
         case .pin: "scope"
         case .region: "rectangle.dashed"
         case .arrow: "arrow.up.right"
+        case .lasso: "lasso"
+        case .brush: "paintbrush.pointed"
         }
     }
 
@@ -27,14 +31,21 @@ enum MarkTool: String, CaseIterable, Codable {
         case .pin: "1"
         case .region: "2"
         case .arrow: "3"
+        case .lasso: "4"
+        case .brush: "5"
         }
     }
+
+    var drawsFreehand: Bool { self == .lasso || self == .brush }
+    var hasEndpointGrips: Bool { self == .region || self == .arrow }
 
     func instruction(in language: AppLanguage) -> String {
         switch self {
         case .pin: language.text("点击要说明的位置", "Click to place a pin")
         case .region: language.text("拖动选中要说明的区域", "Drag to draw a box")
         case .arrow: language.text("从起点拖向要指出的位置", "Drag to draw an arrow")
+        case .lasso: language.text("拖动画任意形状，回到起点附近可闭合", "Draw any shape. Return near the start to close it.")
+        case .brush: language.text("在图上拖动涂抹", "Drag to paint on the image")
         }
     }
 }
@@ -61,6 +72,16 @@ struct Mark: Codable, Identifiable, Equatable {
     var end: ImagePoint
     var problem = ""
     var desired = ""
+    var stroke: [ImagePoint]?
+    var brushWidth: CGFloat?
+    var closesStroke: Bool?
+
+    static func freehand(number: Int, tool: MarkTool, points: [ImagePoint], brushWidth: CGFloat?, closesStroke: Bool? = nil) -> Self? {
+        guard let first = points.first, let last = points.last else { return nil }
+        return Self(number: number, tool: tool, start: first, end: last, stroke: points, brushWidth: brushWidth, closesStroke: closesStroke)
+    }
+
+    var isClosedLasso: Bool { tool == .lasso && (stroke?.count ?? 0) > 2 && (closesStroke ?? true) }
 
     var hasFeedback: Bool {
         !problem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
@@ -68,8 +89,9 @@ struct Mark: Codable, Identifiable, Equatable {
     }
 
     var bounds: CGRect {
-        CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-               width: abs(start.x - end.x), height: abs(start.y - end.y))
+        let endpoints = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                               width: abs(start.x - end.x), height: abs(start.y - end.y))
+        return stroke?.reduce(endpoints) { $0.union(CGRect(origin: $1.point, size: .zero)) } ?? endpoints
     }
 
     func summary(in language: AppLanguage) -> String {
@@ -94,6 +116,7 @@ struct Mark: Codable, Identifiable, Equatable {
         var result = self
         result.start = start.translated(by: offset)
         result.end = end.translated(by: offset)
+        result.stroke = stroke?.map { $0.translated(by: offset) }
         return result
     }
 
@@ -115,6 +138,12 @@ struct Mark: Codable, Identifiable, Equatable {
                                  "Box top-left \(coordinates(bounds.origin)) · \(width) × \(height) px")
         case .arrow:
             return "\(tool.label(in: language)) \(coordinates(start.point)) → \(coordinates(end.point))"
+        case .lasso, .brush:
+            let area = tool == .brush ? bounds.insetBy(dx: -(brushWidth ?? 1) / 2, dy: -(brushWidth ?? 1) / 2) : bounds
+            let rect = area.intersection(CGRect(origin: .zero, size: size)).integral
+            let dimensions = "\(max(1, Int(rect.width))) × \(max(1, Int(rect.height))) px"
+            return language.text("\(tool.label(in: language))范围左上 \(coordinates(rect.origin)) · \(dimensions)",
+                                 "\(tool.label(in: language)) bounds at \(coordinates(rect.origin)) · \(dimensions)")
         }
     }
 }
@@ -285,6 +314,15 @@ struct ExportPreviewRequest: Identifiable {
     let language: AppLanguage
 }
 
+struct ColorReplacementDraft {
+    let id = UUID()
+    var point: ImagePoint?
+    var sample: ColorSample?
+    var targetHex = ""
+
+    var target: AnnotationAppearance? { AnnotationAppearance(hexString: targetHex) }
+}
+
 final class ReviewModel: ObservableObject {
     private static let hideWindowKey = "hideWindowDuringCapture"
     private static let annotationColorKey = "annotationColor"
@@ -295,7 +333,8 @@ final class ReviewModel: ObservableObject {
     @Published private(set) var chosenLanguage: AppLanguage? {
         didSet { preferences.set(chosenLanguage?.rawValue, forKey: Self.languageKey) }
     }
-    @Published var tool: MarkTool? = ReviewModel.defaultTool
+    @Published private(set) var tool: MarkTool? = ReviewModel.defaultTool
+    @Published private(set) var colorReplacement: ColorReplacementDraft?
     @Published var showAnnotationColors = false
     @Published var zoom: Double?
     @Published var visibleZoom: Double = 1
@@ -318,6 +357,7 @@ final class ReviewModel: ObservableObject {
     private var future: [Review] = []
     private var typing: (UUID, NoteField, Date)?
     private var noticeTask: DispatchWorkItem?
+    private var sampleTask: Task<Void, Never>?
 
     init(store: ReviewStore = ReviewStore(), preferences: UserDefaults = .standard) {
         self.store = store
@@ -350,7 +390,7 @@ final class ReviewModel: ObservableObject {
 
     func accept(_ source: ReviewImage, marks: [Mark] = []) {
         remember()
-        tool = Self.defaultTool
+        chooseTool(Self.defaultTool)
         zoom = nil
         viewportReset += 1
         let numbered = marks.enumerated().map { index, mark in
@@ -390,8 +430,60 @@ final class ReviewModel: ObservableObject {
 
     func selectAllMarks() {
         guard !review.marks.isEmpty else { return }
-        tool = nil
+        chooseTool(nil)
         select(Set(review.marks.map(\.id)))
+    }
+
+    func chooseTool(_ next: MarkTool?) {
+        if colorReplacement != nil {
+            sampleTask?.cancel()
+            sampleTask = nil
+            colorReplacement = nil
+        }
+        tool = next
+    }
+
+    func beginColorReplacement() {
+        guard review.source != nil, colorReplacement == nil else { return }
+        tool = nil
+        colorReplacement = ColorReplacementDraft()
+    }
+
+    func sampleColor(at position: CGPoint) {
+        guard colorReplacement != nil, let image = review.source?.image else { return }
+        let point = ImagePoint(CGPoint(x: position.x.rounded(.down), y: position.y.rounded(.down)))
+        let draft = ColorReplacementDraft(point: point)
+        colorReplacement = draft
+        sampleTask?.cancel()
+        sampleTask = Task { @MainActor [weak self] in
+            let worker = Task.detached(priority: .userInitiated) { ColorSample.make(in: image, at: point) }
+            let sample = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, let self, self.colorReplacement?.id == draft.id else { return }
+            self.sampleTask = nil
+            if let sample {
+                var ready = draft
+                ready.sample = sample
+                ready.targetHex = sample.original.hexString
+                self.colorReplacement = ready
+            } else {
+                self.colorReplacement = ColorReplacementDraft()
+                self.notify(self.language.text("无法在这里取色，请点击图中有颜色的位置", "Click a visible pixel to sample its color"))
+            }
+        }
+    }
+
+    func setReplacementHex(_ hex: String) {
+        guard colorReplacement?.sample != nil else { return }
+        colorReplacement?.targetHex = hex
+    }
+
+    func useColorReplacement() {
+        guard let draft = colorReplacement, let point = draft.point, let sample = draft.sample,
+              let target = draft.target, target != sample.original else { return }
+        let hex = target.hexString
+        let desired = language.text("将该处的颜色替换成“\(hex)”", "Replace the color here with “\(hex)”")
+        chooseTool(nil)
+        append(Mark(tool: .pin, start: point, end: point, desired: desired), focusEditor: false)
     }
 
     func reveal(_ id: UUID) {
@@ -400,14 +492,23 @@ final class ReviewModel: ObservableObject {
     }
 
     func add(_ tool: MarkTool, start: CGPoint, end: CGPoint) {
+        append(Mark(tool: tool, start: ImagePoint(start), end: ImagePoint(end)))
+    }
+
+    func add(_ mark: Mark) {
+        append(mark)
+    }
+
+    private func append(_ mark: Mark, focusEditor: Bool = true) {
         remember()
-        let mark = Mark(number: review.nextNumber, tool: tool, start: ImagePoint(start), end: ImagePoint(end))
         var next = review
-        next.marks.append(mark)
+        var numbered = mark
+        numbered.number = next.nextNumber
+        next.marks.append(numbered)
         next.nextNumber += 1
         next.selectedIDs = [mark.id]
         review = next
-        requestedFocus += 1
+        if focusEditor { requestedFocus += 1 }
     }
 
     func updatePositions(_ marks: [Mark]) {
@@ -417,6 +518,7 @@ final class ReviewModel: ObservableObject {
             guard let changed = positions[next.marks[index].id] else { continue }
             next.marks[index].start = changed.start
             next.marks[index].end = changed.end
+            next.marks[index].stroke = changed.stroke
         }
         guard next.marks != review.marks else { return }
         remember()
@@ -479,7 +581,10 @@ final class ReviewModel: ObservableObject {
     }
 
     private func restore(_ previous: Review) {
-        if previous.source?.id != review.source?.id { fit() }
+        if previous.source?.id != review.source?.id {
+            if colorReplacement != nil { chooseTool(nil) }
+            fit()
+        }
         typing = nil
         review = previous
     }

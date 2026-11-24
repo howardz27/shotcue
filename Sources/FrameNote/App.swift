@@ -29,12 +29,15 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unifiedCompact
         window.backgroundColor = Ink.color(0xFFFFFF)
-        window.contentMinSize = NSSize(width: 920, height: 540)
+        let minimumSize = NSSize(width: 920, height: 540)
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
-        let hostingView = NSHostingView(rootView: Workspace(model: model, actions: self))
+        let workspace = Workspace(model: model, actions: self)
+            .frame(minWidth: minimumSize.width, minHeight: minimumSize.height)
+        let hostingView = NSHostingView(rootView: workspace)
         hostingView.safeAreaRegions = []
         window.contentView = hostingView
+        window.contentMinSize = minimumSize
         window.center()
         window.setFrameAutosaveName("FrameNoteWorkspace")
 

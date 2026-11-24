@@ -40,8 +40,15 @@ struct Workspace: View {
                 board
                 if model.review.source != nil {
                     Rectangle().fill(Palette.line).frame(width: 1)
-                    NotesPanel(model: model)
-                        .frame(width: 332)
+                    Group {
+                        if let draft = model.colorReplacement {
+                            ColorReplacementPanel(model: model, draft: draft)
+                                .id(draft.id)
+                        } else {
+                            NotesPanel(model: model)
+                        }
+                    }
+                    .frame(width: 332)
                 }
             }
         }
@@ -57,18 +64,21 @@ struct Workspace: View {
 
     private var toolbar: some View {
         GeometryReader { geometry in
-            toolbarContent(compact: geometry.size.width < (language == .english ? 1360 : 1210),
-                           iconOnlyImport: geometry.size.width < 1000)
-                .frame(width: geometry.size.width, height: geometry.size.height)
+            let english = language == .english
+            let width = geometry.size.width
+            toolbarContent(compact: width < (english ? 1630 : 1380),
+                           narrow: width < (english ? 1200 : 1080),
+                           showToolLabels: width >= (english ? 1450 : 1240))
+                .frame(width: width, height: geometry.size.height)
         }
         .frame(height: 52)
         .background(Palette.surface)
         .overlay(alignment: .bottom) { rule.allowsHitTesting(false) }
     }
 
-    private func toolbarContent(compact: Bool, iconOnlyImport: Bool) -> some View {
+    private func toolbarContent(compact: Bool, narrow: Bool, showToolLabels: Bool) -> some View {
         let hasImage = model.review.source != nil
-        return HStack(spacing: compact ? 6 : 9) {
+        return HStack(spacing: narrow ? 5 : compact ? 6 : 9) {
             HStack(spacing: 8) {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
@@ -80,16 +90,16 @@ struct Workspace: View {
             }
             .fixedSize()
 
-            languageButton
+            languageButton(showsLabel: !narrow)
 
             Rectangle().fill(Palette.line).frame(width: 1, height: 17)
                 .padding(.trailing, 3)
 
             HStack(spacing: 0) {
                 toolbarUtility(language.text("打开", "Open"), icon: "folder", hint: language.text("打开图片  ⌘O", "Open image  ⌘O"),
-                               compact: iconOnlyImport, action: actions.open)
+                               compact: narrow, action: actions.open)
                 toolbarUtility(language.text("粘贴", "Paste"), icon: "doc.on.clipboard", hint: language.text("粘贴图片  ⌘V", "Paste image  ⌘V"), compact: compact, action: model.paste)
-                captureControls(iconOnly: iconOnlyImport)
+                captureControls(iconOnly: narrow)
             }
             .fixedSize()
 
@@ -98,10 +108,17 @@ struct Workspace: View {
             HStack(spacing: 7) {
                 HStack(spacing: 2) {
                     ToolButton(label: language.text("选择", "Select"), icon: "cursorarrow", hint: language.text("选择和移动标注  V", "Select and move annotations  V"),
-                               selected: hasImage && model.tool == nil, showsLabel: !compact) { model.tool = nil }
+                               selected: hasImage && model.tool == nil && model.colorReplacement == nil, showsLabel: !compact) {
+                        model.chooseTool(nil)
+                    }
                     ForEach(MarkTool.allCases, id: \.self) { tool in
                         ToolButton(label: tool.label(in: language), icon: tool.icon, hint: "\(tool.instruction(in: language))  \(tool.shortcut)",
-                                   selected: hasImage && model.tool == tool, showsLabel: !compact || language == .chinese) { model.tool = tool }
+                                   selected: hasImage && model.tool == tool, showsLabel: showToolLabels) { model.chooseTool(tool) }
+                    }
+                    ToolButton(label: language.text("换色", "Replace Color"), icon: "eyedropper",
+                               hint: language.text("点击图中颜色并预览换色  6", "Sample a color and preview a replacement  6"),
+                               selected: model.colorReplacement != nil, showsLabel: showToolLabels) {
+                        model.beginColorReplacement()
                     }
                 }
                 .padding(3)
@@ -123,16 +140,16 @@ struct Workspace: View {
             toolbarDragSpace
 
             HStack(spacing: 5) {
-                toolbarUtility(language.text("预览", "Preview"), icon: "eye", hint: language.text("预览导出图片  ⌘Y", "Preview export  ⌘Y"),
-                               compact: compact, action: actions.previewExport)
+                ActionButton(language.text("预览", "Preview"), icon: "eye", hint: language.text("预览导出图片  ⌘Y", "Preview export  ⌘Y"),
+                             kind: .quiet, action: actions.previewExport)
                     .disabled(!hasImage)
                 ActionButton(language.text("复制图片", "Copy Image"), icon: "photo.on.rectangle", hint: language.text("复制标注图片  ⌘⌥C", "Copy annotated image  ⌘⌥C"),
-                             kind: .primary, action: actions.copyImage)
+                             kind: .primary, showsLabel: !narrow, action: actions.copyImage)
                     .disabled(!hasImage)
                 toolbarUtility(language.text("复制反馈", "Copy Feedback"), icon: "doc.on.doc", hint: language.text("复制给 Agent 的 Markdown  ⌘⇧C", "Copy Markdown feedback for your agent  ⌘⇧C"),
                                compact: compact, action: actions.copyFeedback)
                     .disabled(model.review.marks.isEmpty)
-                ActionButton(language.text("保存", "Save"), icon: "square.and.arrow.down", hint: language.text("保存为 PNG 或 Markdown", "Save as PNG or Markdown"), kind: .outline, showsMenu: true) {
+                ActionButton(language.text("保存", "Save"), icon: "square.and.arrow.down", hint: language.text("保存为 PNG 或 Markdown", "Save as PNG or Markdown"), kind: .outline, showsMenu: true, showsLabel: !narrow) {
                     showSaveOptions.toggle()
                 }
                 .disabled(!hasImage)
@@ -158,9 +175,10 @@ struct Workspace: View {
         .padding(.trailing, 13)
     }
 
-    private var languageButton: some View {
+    private func languageButton(showsLabel: Bool) -> some View {
         ActionButton(language.text("语言", "Language"), icon: "globe",
-                     hint: language.text("切换界面语言", "Change interface language"), kind: .outline, showsMenu: true) {
+                     hint: language.text("切换界面语言", "Change interface language"), kind: .outline,
+                     showsMenu: true, showsLabel: showsLabel) {
             showLanguageOptions.toggle()
         }
         .fixedSize()
@@ -217,7 +235,8 @@ struct Workspace: View {
         .accessibilityIdentifier("annotation-color")
         .help(language.text("选择标注颜色", "Choose annotation color"))
         .popover(isPresented: $model.showAnnotationColors, arrowEdge: .bottom) {
-            AnnotationColorOptions(selection: $model.annotationAppearance, language: language)
+            ColorOptions(selection: $model.annotationAppearance, language: language,
+                         title: language.text("标注颜色", "Annotation Color"))
         }
     }
 
@@ -332,8 +351,10 @@ struct Workspace: View {
     }
 
     private var canvasFooter: some View {
-        let toolIcon = model.tool?.icon ?? "cursorarrow"
-        let instruction = model.tool?.instruction(in: language) ?? language.text("点击选择 · 拖框多选", "Click to select · drag to select multiple")
+        let replacingColor = model.colorReplacement != nil
+        let toolIcon = replacingColor ? "eyedropper" : model.tool?.icon ?? "cursorarrow"
+        let instruction = replacingColor ? language.text("点击图中位置取色", "Click the image to sample a color")
+            : model.tool?.instruction(in: language) ?? language.text("点击选择 · 拖框多选", "Click to select · drag to select multiple")
         return HStack(spacing: 8) {
             if let source = model.review.source {
                 Image(systemName: "photo")
@@ -464,9 +485,11 @@ private struct LanguageWelcome: View {
     }
 }
 
-private struct AnnotationColorOptions: View {
+private struct ColorOptions: View {
     @Binding var selection: AnnotationAppearance
     let language: AppLanguage
+    var title: String? = nil
+    var showsHexInput = true
     @State private var hue: Double = 0
     @State private var saturation: Double = 0
     @State private var brightness: Double = 0
@@ -479,7 +502,7 @@ private struct AnnotationColorOptions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(language.text("标注颜色", "Annotation Color")).font(.system(size: 13, weight: .semibold))
+            if let title { Text(title).font(.system(size: 13, weight: .semibold)) }
             HStack(spacing: 7) {
                 ForEach(presets, id: \.hex) { preset in
                     let appearance = AnnotationAppearance(preset.hex)
@@ -506,28 +529,31 @@ private struct AnnotationColorOptions: View {
             Text(language.text("自定义颜色", "Custom Color")).font(.system(size: 12, weight: .medium))
             colorField.frame(height: 100)
             hueTrack.frame(height: 14)
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(Color(nsColor: selection.fill))
-                    .overlay { Circle().strokeBorder(.black.opacity(0.15)) }
-                    .frame(width: 20, height: 20)
-                TextField(language.text("色值", "Hex color"), text: $hexInput)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        let digits = hexInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .trimmingPrefix("#")
-                        if digits.count == 6, let hex = UInt32(digits, radix: 16) {
-                            setColor(AnnotationAppearance(hex))
-                        } else {
-                            hexInput = String(format: "#%06X", selection.hex)
+            if showsHexInput {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color(nsColor: selection.fill))
+                        .overlay { Circle().strokeBorder(.black.opacity(0.15)) }
+                        .frame(width: 20, height: 20)
+                    TextField(language.text("色值", "Hex color"), text: $hexInput)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            if let appearance = AnnotationAppearance(hexString: hexInput) {
+                                setColor(appearance)
+                            } else {
+                                hexInput = selection.hexString
+                            }
                         }
-                    }
+                }
             }
         }
         .padding(14)
         .frame(width: 232)
         .onAppear { loadColor(selection) }
+        .onChange(of: selection) { _, next in
+            if hexInput != next.hexString { loadColor(next) }
+        }
     }
 
     private var colorField: some View {
@@ -594,14 +620,115 @@ private struct AnnotationColorOptions: View {
         hue = newHue
         saturation = newSaturation
         brightness = newBrightness
-        hexInput = String(format: "#%06X", appearance.hex)
+        hexInput = appearance.hexString
     }
 
     private func applyComponents() {
         let color = Color(hue: hue, saturation: saturation, brightness: brightness)
         guard let appearance = AnnotationAppearance(color: NSColor(color)) else { return }
         if appearance != selection { selection = appearance }
-        hexInput = String(format: "#%06X", appearance.hex)
+        hexInput = appearance.hexString
+    }
+}
+
+private struct ColorReplacementPanel: View {
+    @ObservedObject var model: ReviewModel
+    let draft: ColorReplacementDraft
+    @State private var showTargetPalette = false
+
+    private var language: AppLanguage { model.language }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(language.text("替换颜色", "Replace Color"))
+                    .font(.system(size: 16, weight: .semibold))
+                Spacer()
+                IconButton(language.text("取消换色", "Cancel Color Replacement"), icon: "xmark",
+                           hint: language.text("取消换色  Esc", "Cancel color replacement  Esc")) { model.chooseTool(nil) }
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 57)
+            .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
+
+            VStack(alignment: .leading, spacing: 16) {
+                if let sample = draft.sample {
+                    colorControls(sample)
+                } else if draft.point != nil {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(language.text("正在取色…", "Sampling color…"))
+                    }
+                } else {
+                    Text(language.text("点击图中要换色的位置。", "Click the area you want to recolor."))
+                }
+            }
+            .font(.system(size: 13))
+            .padding(20)
+            Spacer()
+        }
+        .frame(maxHeight: .infinity)
+        .background(Palette.surface)
+    }
+
+    private func colorControls(_ sample: ColorSample) -> some View {
+        let targetLabel = language.text("目标颜色", "Target color")
+        let hex = Binding(get: { model.colorReplacement?.targetHex ?? "" }, set: model.setReplacementHex)
+        let color = Binding(get: { model.colorReplacement?.target ?? sample.original }, set: { picked in
+            model.setReplacementHex(picked.hexString)
+        })
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text(language.text("原始颜色", "Sampled color"))
+                Spacer()
+                Circle()
+                    .fill(Color(nsColor: sample.original.fill))
+                    .overlay { Circle().strokeBorder(.black.opacity(0.16)) }
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+                Text(verbatim: sample.original.hexString).monospaced()
+            }
+            HStack(spacing: 8) {
+                Text(targetLabel)
+                Spacer()
+                Button { showTargetPalette.toggle() } label: {
+                    HStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color(nsColor: color.wrappedValue.fill))
+                            .overlay { RoundedRectangle(cornerRadius: 3).strokeBorder(.black.opacity(0.16)) }
+                            .frame(width: 21, height: 15)
+                        Image(systemName: showTargetPalette ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .padding(.horizontal, 5)
+                    .frame(height: 22)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(HoverButton(kind: .outline))
+                .accessibilityLabel(language.text("选择目标颜色", "Pick target color"))
+                .accessibilityValue(color.wrappedValue.hexString)
+                .accessibilityAddTraits(showTargetPalette ? .isSelected : [])
+                TextField(targetLabel, text: hex, prompt: Text("#RRGGBB"))
+                    .textFieldStyle(.roundedBorder)
+                    .monospaced()
+                    .frame(width: 90)
+                    .accessibilityLabel(language.text("目标色号", "Target hex color"))
+            }
+            if showTargetPalette {
+                ColorOptions(selection: color, language: language, showsHexInput: false)
+                    .background(Palette.board, in: RoundedRectangle(cornerRadius: 8))
+            }
+            Text(draft.target == nil
+                 ? language.text("请输入 6 位十六进制色号。", "Enter a six-digit hex color.")
+                 : language.text("画布实时预览，点击图中其他位置可重新取色。", "Preview updates as you choose a color. Click the image to sample again."))
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            ActionButton(language.text("选用", "Use Color"), icon: "checkmark",
+                         hint: language.text("生成换色反馈", "Add color replacement feedback"), kind: .primary,
+                         action: model.useColorReplacement)
+                .disabled(draft.target == nil || draft.target == sample.original)
+        }
     }
 }
 
@@ -652,7 +779,7 @@ private struct NotesPanel: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
                     }
-                    .onChange(of: model.review.selectedID) { _, next in
+                    .onChange(of: model.review.selectedID, initial: true) { _, next in
                         guard let next else { return }
                         withAnimation(.easeOut(duration: 0.16)) { scroll.scrollTo(next) }
                     }
@@ -814,15 +941,17 @@ private struct ActionButton: View {
     let hint: String
     let kind: HoverButton.Kind
     let showsMenu: Bool
+    let showsLabel: Bool
     let action: () -> Void
 
-    init(_ title: String, icon: String, hint: String, kind: HoverButton.Kind, showsMenu: Bool = false,
+    init(_ title: String, icon: String, hint: String, kind: HoverButton.Kind, showsMenu: Bool = false, showsLabel: Bool = true,
          action: @escaping () -> Void) {
         self.title = title
         self.icon = icon
         self.hint = hint
         self.kind = kind
         self.showsMenu = showsMenu
+        self.showsLabel = showsLabel
         self.action = action
     }
 
@@ -830,7 +959,7 @@ private struct ActionButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 12, weight: .semibold))
-                Text(title).font(.system(size: 12, weight: .semibold))
+                if showsLabel { Text(title).font(.system(size: 12, weight: .semibold)) }
                 if showsMenu {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))

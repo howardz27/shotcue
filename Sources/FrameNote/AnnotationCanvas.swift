@@ -20,6 +20,7 @@ final class MarkCanvas: NSView {
     private enum Gesture {
         case pan(origin: CGPoint, previous: CGPoint)
         case mark(start: CGPoint, current: CGPoint, tool: MarkTool)
+        case stroke(tool: MarkTool, brushWidth: CGFloat?)
         case move(start: CGPoint, original: [Mark], offset: CGSize)
         case marquee(start: CGPoint, current: CGPoint, retaining: Set<UUID>)
         case adjust(original: Mark, current: Mark, endpoint: Endpoint)
@@ -32,6 +33,7 @@ final class MarkCanvas: NSView {
     private var revealRequest = 0
     private var pan = CGPoint.zero
     private var gesture: Gesture?
+    private var strokePoints: [ImagePoint] = []
     private var spaceHeld = false
     private var eventMonitor: Any?
     private var mouseTracking: NSTrackingArea?
@@ -146,6 +148,15 @@ final class MarkCanvas: NSView {
         context.clip(to: imageRect)
         Ink.fill(context, imageRect, .white)
         context.interpolationQuality = scale >= 2 ? .none : .high
+        if let replacement = model.colorReplacement {
+            if let sample = replacement.sample, let target = replacement.target, target != sample.original {
+                sample.drawPreview(of: source.image, target: target, in: imageRect, context: context)
+            } else {
+                Ink.drawPixels(source.image, in: imageRect, context: context)
+            }
+            context.restoreGState()
+            return
+        }
         Ink.drawPixels(source.image, in: imageRect, context: context)
 
         func draw(_ mark: Mark, selected: Bool) {
@@ -173,7 +184,7 @@ final class MarkCanvas: NSView {
         }
         for selected in marks where selection.contains(selected.id) {
             draw(selected, selected: true)
-            if selection.count == 1, marqueeRect == nil, selected.tool != .pin {
+            if selection.count == 1, marqueeRect == nil, selected.tool.hasEndpointGrips {
                 let layout = MarkLayout(mark: selected, imageRect: imageRect, scale: scale, unit: markerUnit)
                 for point in [layout.start, layout.end] {
                     let radius = 4.5 * markerUnit
@@ -185,6 +196,11 @@ final class MarkCanvas: NSView {
         }
         if case let .mark(start, current, tool) = gesture {
             let preview = Mark(number: model.review.nextNumber, tool: tool, start: ImagePoint(start), end: ImagePoint(current))
+            draw(preview, selected: true)
+        }
+        if case let .stroke(tool, brushWidth) = gesture,
+           let preview = Mark.freehand(number: model.review.nextNumber, tool: tool, points: strokePoints,
+                                       brushWidth: brushWidth, closesStroke: false) {
             draw(preview, selected: true)
         }
         context.restoreGState()
@@ -216,7 +232,7 @@ final class MarkCanvas: NSView {
         if let mark = ordered.first(where: overStroke) { return mark }
         guard model.tool == nil, imageRect.contains(point) else { return nil }
         return ordered.first {
-            $0.tool == .region && MarkLayout(mark: $0, imageRect: imageRect, scale: scale, unit: markerUnit).region.contains(point)
+            MarkLayout(mark: $0, imageRect: imageRect, scale: scale, unit: markerUnit).containsArea(point)
         }
     }
 
@@ -243,7 +259,7 @@ final class MarkCanvas: NSView {
     }
 
     private func grip(at point: CGPoint, of mark: Mark) -> Endpoint? {
-        guard mark.tool != .pin else { return nil }
+        guard mark.tool.hasEndpointGrips else { return nil }
         let layout = MarkLayout(mark: mark, imageRect: imageRect, scale: scale, unit: markerUnit)
         let startDistance = hypot(point.x - layout.start.x, point.y - layout.start.y)
         let endDistance = hypot(point.x - layout.end.x, point.y - layout.end.y)
@@ -258,6 +274,12 @@ final class MarkCanvas: NSView {
         let extending = model.tool == nil && !event.modifierFlags.intersection([.shift, .command]).isEmpty
         if spaceHeld {
             beginPan(point)
+        } else if model.colorReplacement != nil {
+            gesture = nil
+            if imageRect.contains(point) { model.sampleColor(at: imagePoint(point)) }
+        } else if let tool = model.tool, tool.drawsFreehand, imageRect.contains(point) {
+            strokePoints = [ImagePoint(imagePoint(point))]
+            gesture = .stroke(tool: tool, brushWidth: tool == .brush ? 12 / scale : nil)
         } else if !extending, let mark = model.selectedMark, let endpoint = grip(at: point, of: mark) {
             gesture = .adjust(original: mark, current: mark, endpoint: endpoint)
         } else if let mark = findMark(at: point, model: model) {
@@ -300,6 +322,15 @@ final class MarkCanvas: NSView {
             } else {
                 model.notify(tool.instruction(in: model.language))
             }
+        case let .stroke(tool, brushWidth):
+            addStrokePoint(at: position(event))
+            if tool == .lasso && strokePoints.count < 2 {
+                model.notify(tool.instruction(in: model.language))
+            } else if let mark = Mark.freehand(number: model.review.nextNumber, tool: tool, points: strokePoints,
+                                               brushWidth: brushWidth, closesStroke: tool == .lasso ? returnsToStart : nil) {
+                model.add(mark)
+            }
+            strokePoints.removeAll()
         case let .move(_, original, offset):
             model.updatePositions(original.map { $0.translated(by: offset) })
         case let .adjust(_, current, _):
@@ -333,6 +364,8 @@ final class MarkCanvas: NSView {
             constrainPan()
         case let .mark(start, _, tool):
             gesture = .mark(start: start, current: tool == .pin ? start : imagePoint(point), tool: tool)
+        case .stroke:
+            addStrokePoint(at: point)
         case let .move(start, original, _):
             guard let size = model?.review.source?.size else { return }
             let distance = CGSize(width: (point.x - start.x) / scale, height: (point.y - start.y) / scale)
@@ -356,6 +389,19 @@ final class MarkCanvas: NSView {
             break
         }
         needsDisplay = true
+    }
+
+    private func addStrokePoint(at position: CGPoint) {
+        let point = ImagePoint(imagePoint(position))
+        guard strokePoints.last != point else { return }
+        strokePoints.append(point)
+    }
+
+    private var returnsToStart: Bool {
+        guard strokePoints.count > 2, let first = strokePoints.first, let last = strokePoints.last else { return false }
+        let gap = hypot(last.x - first.x, last.y - first.y)
+        guard gap <= 8 / scale else { return false }
+        return strokePoints.contains { hypot($0.x - first.x, $0.y - first.y) > 3 * gap }
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -395,6 +441,8 @@ final class MarkCanvas: NSView {
     private func refreshCursor(at position: CGPoint) {
         if spaceHeld {
             NSCursor.openHand.set()
+        } else if model?.colorReplacement != nil || model?.tool?.drawsFreehand == true {
+            (imageRect.contains(position) ? NSCursor.crosshair : NSCursor.arrow).set()
         } else if let selected = model?.selectedMark, grip(at: position, of: selected) != nil {
             NSCursor.crosshair.set()
         } else if let model, findMark(at: position, model: model) != nil {
@@ -441,21 +489,27 @@ final class MarkCanvas: NSView {
             if bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) { NSCursor.openHand.set() }
             return nil
         case 51, 117:
-            if !model.review.selectedIDs.isEmpty { model.removeSelected(); return nil }
+            if model.colorReplacement == nil, !model.review.selectedIDs.isEmpty { model.removeSelected(); return nil }
         case 53:
             if gesture != nil { gesture = nil; needsDisplay = true }
+            else if model.colorReplacement != nil { model.chooseTool(nil) }
             else { model.select(nil) }
             return nil
         default:
             break
         }
         if key == "v" {
-            model.tool = nil
+            model.chooseTool(nil)
             refreshCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
             return nil
         }
         if let tool = MarkTool.allCases.first(where: { $0.shortcut == key }) {
-            model.tool = tool
+            model.chooseTool(tool)
+            refreshCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            return nil
+        }
+        if key == "6" {
+            model.beginColorReplacement()
             refreshCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
             return nil
         }

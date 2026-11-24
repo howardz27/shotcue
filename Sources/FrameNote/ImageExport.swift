@@ -67,6 +67,14 @@ struct AnnotationAppearance: Equatable, Sendable {
 
     init(_ hex: UInt32 = Ink.logoBlue) { self.hex = hex }
 
+    init?(hexString: String) {
+        let text = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = text.hasPrefix("#") ? text.dropFirst() : text[...]
+        guard digits.count == 6, digits.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }),
+              let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(value)
+    }
+
     init?(color: NSColor) {
         guard let rgb = color.usingColorSpace(.sRGB) else { return nil }
         func byte(_ component: CGFloat) -> UInt32 {
@@ -75,6 +83,7 @@ struct AnnotationAppearance: Equatable, Sendable {
         hex = byte(rgb.redComponent) << 16 | byte(rgb.greenComponent) << 8 | byte(rgb.blueComponent)
     }
 
+    var hexString: String { String(format: "#%06X", hex) }
     var fill: NSColor { Ink.color(hex) }
     var foreground: NSColor { luminance > 0.179 ? .black : .white }
 
@@ -116,15 +125,36 @@ struct MarkLayout {
     var start: CGPoint { screen(mark.start) }
     var end: CGPoint { screen(mark.end) }
     var region: CGRect {
-        CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-               width: abs(start.x - end.x), height: abs(start.y - end.y))
+        let bounds = mark.bounds
+        return CGRect(origin: screen(ImagePoint(bounds.origin)),
+                      size: CGSize(width: bounds.width * scale, height: bounds.height * scale))
+    }
+
+    private var strokePoints: [CGPoint] { (mark.stroke ?? [mark.start, mark.end]).map(screen) }
+    private var brushWidth: CGFloat { max(1, (mark.brushWidth ?? 12) * scale) }
+
+    private func strokePath(_ points: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        for point in points.dropFirst() { path.addLine(to: point) }
+        if mark.isClosedLasso { path.closeSubpath() }
+        return path
+    }
+
+    func containsArea(_ point: CGPoint) -> Bool {
+        switch mark.tool {
+        case .region: region.contains(point)
+        case .lasso: mark.isClosedLasso && region.contains(point) && strokePath(strokePoints).contains(point, using: .evenOdd)
+        default: false
+        }
     }
 
     func badge(for number: Int) -> CGRect {
         let height = 26 * unit
         let width = (number < 10 ? 26 : number < 100 ? 33 : 43) * unit
         let offset = 11 * unit
-        let anchor = mark.tool == .region ? region.origin : start
+        let anchor = mark.tool == .region || mark.tool == .lasso ? region.origin : start
         let right = anchor.x + offset
         let left = anchor.x - offset - width
         let x = right + width <= imageRect.maxX - 3 * unit ? right : left
@@ -146,13 +176,24 @@ struct MarkLayout {
                 (region.width <= 2 * slop || region.height <= 2 * slop ||
                  !region.insetBy(dx: slop, dy: slop).contains(point))
         case .arrow:
-            let dx = end.x - start.x
-            let dy = end.y - start.y
-            let squared = dx * dx + dy * dy
-            guard squared > 0 else { return hypot(point.x - start.x, point.y - start.y) <= slop }
-            let t = max(0, min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / squared))
-            return hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy)) <= slop
+            return distance(from: point, toSegmentFrom: start, to: end) <= slop
+        case .lasso, .brush:
+            let radius = slop + (mark.tool == .brush ? brushWidth / 2 : 0)
+            guard region.insetBy(dx: -radius, dy: -radius).contains(point) else { return false }
+            let points = strokePoints
+            if mark.isClosedLasso, distance(from: point, toSegmentFrom: end, to: start) <= radius { return true }
+            if points.count == 1 { return hypot(point.x - start.x, point.y - start.y) <= radius }
+            return zip(points, points.dropFirst()).contains { distance(from: point, toSegmentFrom: $0, to: $1) <= radius }
         }
+    }
+
+    private func distance(from point: CGPoint, toSegmentFrom first: CGPoint, to last: CGPoint) -> CGFloat {
+        let dx = last.x - first.x
+        let dy = last.y - first.y
+        let squared = dx * dx + dy * dy
+        guard squared > 0 else { return hypot(point.x - first.x, point.y - first.y) }
+        let t = max(0, min(1, ((point.x - first.x) * dx + (point.y - first.y) * dy) / squared))
+        return hypot(point.x - (first.x + t * dx), point.y - (first.y + t * dy))
     }
 
     func intersects(_ selection: CGRect) -> Bool {
@@ -163,19 +204,31 @@ struct MarkLayout {
         case .region:
             return selection.intersects(region)
         case .arrow:
-            let target = selection.insetBy(dx: -3 * unit, dy: -3 * unit)
-            let left = max(target.minX, min(start.x, end.x))
-            let right = min(target.maxX, max(start.x, end.x))
-            guard left <= right else { return false }
-            let dx = end.x - start.x
-            if dx == 0 {
-                return max(start.y, end.y) >= target.minY && min(start.y, end.y) <= target.maxY
+            return segment(from: start, to: end, intersects: selection.insetBy(dx: -3 * unit, dy: -3 * unit))
+        case .lasso, .brush:
+            let padding = mark.tool == .brush ? brushWidth / 2 : 3 * unit
+            let target = selection.insetBy(dx: -padding, dy: -padding)
+            guard selection.intersects(region.insetBy(dx: -padding, dy: -padding)) else { return false }
+            let points = strokePoints
+            if mark.isClosedLasso,
+               segment(from: end, to: start, intersects: target) || containsArea(CGPoint(x: target.midX, y: target.midY)) {
+                return true
             }
-            let slope = (end.y - start.y) / dx
-            let firstY = start.y + (left - start.x) * slope
-            let lastY = start.y + (right - start.x) * slope
-            return max(firstY, lastY) >= target.minY && min(firstY, lastY) <= target.maxY
+            if points.count == 1 { return target.contains(start) }
+            return zip(points, points.dropFirst()).contains { segment(from: $0, to: $1, intersects: target) }
         }
+    }
+
+    private func segment(from start: CGPoint, to end: CGPoint, intersects target: CGRect) -> Bool {
+        let left = max(target.minX, min(start.x, end.x))
+        let right = min(target.maxX, max(start.x, end.x))
+        guard left <= right else { return false }
+        let dx = end.x - start.x
+        if dx == 0 { return max(start.y, end.y) >= target.minY && min(start.y, end.y) <= target.maxY }
+        let slope = (end.y - start.y) / dx
+        let firstY = start.y + (left - start.x) * slope
+        let lastY = start.y + (right - start.x) * slope
+        return max(firstY, lastY) >= target.minY && min(firstY, lastY) <= target.maxY
     }
 
     func draw(number: Int, selected: Bool, appearance: AnnotationAppearance, context: CGContext) {
@@ -221,6 +274,39 @@ struct MarkLayout {
                 Ink.line(context, left, end, color, width: width)
                 Ink.line(context, end, right, color, width: width)
             }
+        case .lasso, .brush:
+            let points = strokePoints
+            let path = strokePath(points)
+            context.saveGState()
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            if mark.tool == .lasso {
+                if mark.isClosedLasso {
+                    context.addPath(path)
+                    context.setFillColor(marker.withAlphaComponent(0.10).cgColor)
+                    context.fillPath(using: .evenOdd)
+                }
+                for (color, width) in [(outer, thickness + 2.4 * unit), (marker, thickness)] {
+                    context.addPath(path)
+                    context.setStrokeColor(color.cgColor)
+                    context.setLineWidth(width)
+                    context.strokePath()
+                }
+            } else {
+                let color = marker.withAlphaComponent(0.36).cgColor
+                let width = brushWidth
+                if points.count == 1 {
+                    context.setFillColor(color)
+                    context.fillEllipse(in: CGRect(x: start.x - width / 2, y: start.y - width / 2,
+                                                   width: width, height: width))
+                } else {
+                    context.addPath(path)
+                    context.setStrokeColor(color)
+                    context.setLineWidth(width)
+                    context.strokePath()
+                }
+            }
+            context.restoreGState()
         }
 
         Self.drawBadge(number, in: badgeRect, unit: unit, selected: selected, appearance: appearance, context: context)

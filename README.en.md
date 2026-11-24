@@ -22,9 +22,10 @@ For screen capture, grant Screen Recording access in System Settings if prompted
 ## Features
 
 - **Import and capture.** Open, drop, or paste an image, or capture a region of the screen. ShotCue can hide its window while you capture.
-- **Numbered annotations.** Use boxes, pins, or arrows. Type your feedback right after adding an annotation, press Tab to switch from the issue to the requested change, or press Esc to return to the canvas.
+- **Numbered annotations.** Use boxes, pins, arrows, a freehand lasso, or a translucent brush. Draw any shape with the lasso and return near the start to close it. Type your feedback right after adding an annotation, press Tab to switch from the issue to the requested change, or press Esc to return to the canvas.
 - **Select and adjust.** Click or drag to select annotations. Move them together, or use the handles on a single annotation to resize a box or adjust an arrow.
 - **Custom colors.** Pick a preset, drag in the color picker, or enter a hex value.
+- **Color replacement preview.** Use the eyedropper to sample a spot, then pick a target color or enter its hex value. The canvas previews the change across the connected area of similar color. Click **Use Color** to pin the spot and add the target hex value to the requested change.
 - **Share with an agent.** Preview, copy, or save an annotated PNG, or copy Markdown feedback with coordinates from the original image. When you've entered feedback, the PNG includes it below the screenshot. With empty notes, the export keeps the original dimensions and places the annotations on the image.
 - **Switch languages.** Click **Language** (or **语言**) next to the ShotCue logo at the top of the window. The choice takes effect immediately, is remembered, and applies to the labels in exported feedback.
 
@@ -38,6 +39,7 @@ ShotCue works offline and keeps your most recent review as a local draft.
 | Paste an image while editing text | `⌘⌥V` |
 | Capture a screen region | `⌘⇧S` |
 | Pin, box, or arrow | `1` / `2` / `3` |
+| Lasso, brush, or replace color | `4` / `5` / `6` |
 | Select tool | `V` |
 | Select every annotation | `Ctrl+A` / `⌘A` |
 | Pan / Fit to window | Hold Space and drag / `0` |

@@ -195,6 +195,136 @@ enum DevelopmentArtifacts {
         try check(model.review.marks.isEmpty, "Deleting a selection left selected annotations behind")
         model.undo()
         try check(model.review.marks == beforeMove, "Undo did not restore a deleted group")
-        print("Verified annotation color persistence, PNG export with and without feedback, Chinese Markdown, undo/redo, clipboard and draft restore.")
+
+        guard let bitmap = Ink.bitmap(width: 100, height: 80) else { throw VerificationError("Color test bitmap unavailable") }
+        let blue = AnnotationAppearance(0x3264C8)
+        let nearbyBlue = AnnotationAppearance(0x3B6ACD)
+        let distinctBlue = AnnotationAppearance(0x4678DC)
+        let green = AnnotationAppearance(0x12AA34)
+        let foreground = AnnotationAppearance(0x0A1428)
+        let mixedEdge = AnnotationAppearance(0x1E3C78)
+        let brushBase = Ink.color(0x404040)
+        Ink.onBitmap(bitmap, height: 80) {
+            Ink.fill(bitmap, CGRect(x: 5, y: 5, width: 12, height: 9), blue.fill)
+            Ink.fill(bitmap, CGRect(x: 17, y: 5, width: 6, height: 9), nearbyBlue.fill)
+            Ink.fill(bitmap, CGRect(x: 23, y: 5, width: 6, height: 9), distinctBlue.fill)
+            Ink.fill(bitmap, CGRect(x: 6, y: 14, width: 6, height: 1), mixedEdge.fill)
+            Ink.fill(bitmap, CGRect(x: 6, y: 15, width: 6, height: 3), foreground.fill)
+            Ink.fill(bitmap, CGRect(x: 5, y: 60, width: 18, height: 10), blue.fill)
+            Ink.fill(bitmap, CGRect(x: 70, y: 12, width: 17, height: 13), brushBase)
+        }
+        guard let colorImage = bitmap.makeImage(), let preview = Ink.bitmap(width: 100, height: 80),
+              let sample = ColorSample.make(in: colorImage, at: ImagePoint(CGPoint(x: 8, y: 8))) else {
+            throw VerificationError("Could not sample the upper blue region")
+        }
+        try check(sample.original == blue, "Color sampling used the wrong channels or image origin")
+        Ink.onBitmap(preview, height: 80) {
+            sample.drawPreview(of: colorImage, target: green, in: CGRect(x: 0, y: 0, width: 100, height: 80), context: preview)
+        }
+        guard let changed = preview.makeImage() else { throw VerificationError("Could not render the color preview") }
+        func color(at x: CGFloat, _ y: CGFloat) -> AnnotationAppearance? {
+            ColorSample.make(in: changed, at: ImagePoint(CGPoint(x: x, y: y)))?.original
+        }
+        try check(color(at: 8, 8) == green && color(at: 20, 8) == green, "Preview missed the sampled or adjacent similar color")
+        try check(color(at: 26, 8) == distinctBlue, "Preview leaked into an adjacent, visibly different color")
+        try check(color(at: 8, 65) == blue && color(at: 30, 8) == nil, "Preview changed a disconnected region or transparency")
+        let edgeColor = color(at: 8, 14)?.hex
+        try check((edgeColor == 0x0E5E2E || edgeColor == 0x0E5F2E) && color(at: 8, 15) == foreground,
+                  "Preview did not replace the background contribution of an antialiased edge")
+
+        model.accept(ReviewImage(name: "color-test.png", image: colorImage))
+        model.zoom = 1
+        let canvas = MarkCanvas(frame: CGRect(x: 0, y: 0, width: 200, height: 160))
+        func draw(_ tool: MarkTool, points: [CGPoint]) throws {
+            model.chooseTool(tool)
+            canvas.update(from: model)
+            for (index, point) in points.enumerated() {
+                let location = canvas.convert(CGPoint(x: point.x + 50, y: point.y + 40), to: nil)
+                let type: NSEvent.EventType = index == 0 ? .leftMouseDown : index == points.count - 1 ? .leftMouseUp : .leftMouseDragged
+                guard let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                                                     windowNumber: 0, context: nil, eventNumber: index, clickCount: 1, pressure: 1) else {
+                    throw VerificationError("Could not create a test mouse event")
+                }
+                switch type {
+                case .leftMouseDown: canvas.mouseDown(with: event)
+                case .leftMouseUp: canvas.mouseUp(with: event)
+                default: canvas.mouseDragged(with: event)
+                }
+            }
+        }
+        let lassoPoints = [CGPoint(x: 30, y: 30), CGPoint(x: 68, y: 33), CGPoint(x: 54, y: 60),
+                           CGPoint(x: 35, y: 48), CGPoint(x: 31, y: 32)]
+        let brushPoints = [CGPoint(x: 60, y: 20), CGPoint(x: 72, y: 22), CGPoint(x: 85, y: 20)]
+        try draw(.lasso, points: lassoPoints)
+        try draw(.brush, points: brushPoints)
+        guard model.review.marks.count == 2, let lasso = model.review.marks.first, let brush = model.selectedMark else {
+            throw VerificationError("Could not create the freehand annotations")
+        }
+        try check(lasso.stroke == lassoPoints.map(ImagePoint.init) && brush.stroke == brushPoints.map(ImagePoint.init),
+                  "The canvas did not record the freehand points in image coordinates")
+        let imageRect = CGRect(x: 0, y: 0, width: colorImage.width, height: colorImage.height)
+        let lassoLayout = MarkLayout(mark: lasso, imageRect: imageRect, scale: 1, unit: 0.5)
+        try check(lasso.closesStroke == true && lassoLayout.containsArea(CGPoint(x: 49, y: 43)) &&
+                  !lassoLayout.containsArea(CGPoint(x: 65, y: 52)),
+                  "Lasso selection used its bounding box instead of its path")
+        try check(lasso.bounds.maxX == 68 && lasso.bounds.maxY == 60, "Lasso bounds missed its intermediate points")
+        let movedBrush = brush.translated(by: CGSize(width: 2, height: 8))
+        model.updatePositions([movedBrush])
+        try check(model.selectedMark?.stroke == movedBrush.stroke, "Moving the brush lost its path")
+        model.undo()
+        let freehand = try ImageExport.render(model.review, appearance: model.annotationAppearance)
+        guard let brushPixel = ColorSample.make(in: freehand, at: ImagePoint(CGPoint(x: 72, y: 22)))?.original.fill else {
+            throw VerificationError("The exported brush pixel was missing")
+        }
+        let mixedBrush = Ink.color(0x804E4E)
+        let redDifference = abs(brushPixel.redComponent - mixedBrush.redComponent)
+        let greenDifference = abs(brushPixel.greenComponent - mixedBrush.greenComponent)
+        let blueDifference = abs(brushPixel.blueComponent - mixedBrush.blueComponent)
+        try check(redDifference + greenDifference + blueDifference <= 4.0 / 255,
+                  "The exported brush path did not blend with the image beneath it")
+        try check(ColorSample.make(in: freehand, at: ImagePoint(CGPoint(x: 49, y: 43))) != nil,
+                  "PNG omitted the lasso fill")
+
+        model.beginColorReplacement()
+        model.sampleColor(at: CGPoint(x: 8.7, y: 8.6))
+        let sampleTimeout = Date().addingTimeInterval(5)
+        while model.colorReplacement?.sample == nil && Date() < sampleTimeout {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        try check(model.colorReplacement?.sample?.original == blue, "Color sample was not delivered to the workspace")
+        model.setReplacementHex("#1Z")
+        model.useColorReplacement()
+        try check(model.review.marks.count == 2, "An invalid target color created feedback")
+        model.setReplacementHex("12aa34")
+        model.useColorReplacement()
+        let feedback = "将该处的颜色替换成“#12AA34”"
+        try check(model.colorReplacement == nil && model.selectedMark?.desired == feedback &&
+                  model.selectedMark?.start.point == CGPoint(x: 8, y: 8) && model.review.markdown().contains(feedback),
+                  "Confirmed color replacement did not create feedback at the sampled pixel")
+        try check(model.review.source.flatMap { ColorSample.make(in: $0.image, at: ImagePoint(CGPoint(x: 8, y: 8))) }?.original == blue,
+                  "Confirming feedback changed the original pixels")
+        model.undo()
+        try check(model.review.marks.count == 2, "Undo did not remove the replacement feedback")
+        model.redo()
+        let shortLine = [CGPoint(x: 8, y: 34), CGPoint(x: 10, y: 34)]
+        try draw(.lasso, points: shortLine)
+        try check(model.selectedMark?.stroke == shortLine.map(ImagePoint.init) && model.selectedMark?.closesStroke == false,
+                  "Lasso rejected a short, straight stroke")
+        try check(model.review.markdown().contains("圈选范围左上 (8, 34) · 2 × 1 px"), "A straight lasso lost its location in Markdown")
+        let openPoints = [CGPoint(x: 8, y: 34), CGPoint(x: 8, y: 58), CGPoint(x: 32, y: 58)]
+        try draw(.lasso, points: openPoints)
+        guard let openMark = model.selectedMark else { throw VerificationError("The open lasso was not recorded") }
+        let openLayout = MarkLayout(mark: openMark, imageRect: imageRect, scale: 1, unit: 0.5)
+        try check(openMark.stroke == openPoints.map(ImagePoint.init) && !openMark.isClosedLasso &&
+                  !openLayout.hitTest(CGPoint(x: 20, y: 46), number: openMark.number),
+                  "The open lasso added a segment between its start and end")
+        var legacyLasso = lasso
+        legacyLasso.closesStroke = nil
+        let legacyRecord = try JSONEncoder().encode(legacyLasso)
+        let legacyRestored = try JSONDecoder().decode(Mark.self, from: legacyRecord)
+        try check(legacyRestored.isClosedLasso, "A lasso from an older draft lost its closed outline")
+        model.flush()
+        try check(store.load().marks == model.review.marks, "Draft round trip lost freehand paths or replacement feedback")
+        print("Verified freehand annotations, local recoloring and feedback, PNG and Markdown export, undo/redo, clipboard and draft restore.")
     }
 }

@@ -21,6 +21,7 @@ For screen capture, grant Screen Recording access in System Settings if prompted
 
 ## Features
 
+- **UI Atlas**. Click **UI Atlas** beside the feedback list or press `⌘⇧G` to expand it in the main window. Click **Collapse** to return to your feedback. Browse 185 bilingual entries in 16 categories, including visual styles, color, typography, motion, design principles, interaction states, responsive layouts and accessibility. Search terms, CSS properties and issue descriptions, compare illustrations, play motion samples and copy example feedback.
 - **Import and capture.** Open, drop, or paste an image, or capture a region of the screen. ShotCue can hide its window while you capture.
 - **Numbered annotations.** Use boxes, pins, arrows, a freehand lasso, or a translucent brush. Draw any shape with the lasso and return near the start to close it. Type your feedback right after adding an annotation, press Tab to switch from the issue to the requested change, or press Esc to return to the canvas.
 - **Select and adjust.** Click or drag to select annotations. Move them together, or use the handles on a single annotation to resize a box or adjust an arrow.

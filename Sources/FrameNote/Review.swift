@@ -336,6 +336,7 @@ final class ReviewModel: ObservableObject {
     @Published private(set) var tool: MarkTool? = ReviewModel.defaultTool
     @Published private(set) var colorReplacement: ColorReplacementDraft?
     @Published var showAnnotationColors = false
+    @Published var showDesignAtlas = false
     @Published var zoom: Double?
     @Published var visibleZoom: Double = 1
     @Published var viewportReset = 0

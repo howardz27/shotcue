@@ -88,6 +88,12 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    @objc func toggleDesignAtlas() {
+        guard let window = editorWindow, window.attachedSheet == nil, model.exportPreview == nil else { return }
+        model.showDesignAtlas.toggle()
+        window.makeKeyAndOrderFront(nil)
+    }
+
     @objc func openDemo() {
         guard let (image, marks) = Demo.make(in: language) else { return }
         model.accept(image, marks: marks)
@@ -170,7 +176,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     private var isEditingText: Bool {
-        let responder = editorWindow?.firstResponder
+        let responder = NSApp.keyWindow?.firstResponder
         return responder is NSTextView || responder is NSTextField || responder is NSTextInputClient
     }
 
@@ -310,8 +316,15 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if previous == nil { loadLaunchContent() }
     }
 
-    @objc func undo() { model.undo() }
-    @objc func redo() { model.redo() }
+    @objc func undo() {
+        if model.showDesignAtlas && isEditingText { NSApp.keyWindow?.firstResponder?.undoManager?.undo() }
+        else { model.undo() }
+    }
+
+    @objc func redo() {
+        if model.showDesignAtlas && isEditingText { NSApp.keyWindow?.firstResponder?.undoManager?.redo() }
+        else { model.redo() }
+    }
     @objc func fit() { model.fit() }
     @objc func zoomIn() { model.adjustZoom(by: 1.25) }
     @objc func zoomOut() { model.adjustZoom(by: 1 / 1.25) }
@@ -323,8 +336,13 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case #selector(changeLanguage(_:)):
             item.state = model.chosenLanguage?.rawValue == item.representedObject as? String ? .on : .off
             return true
-        case #selector(undo): return model.canUndo
-        case #selector(redo): return model.canRedo
+        case #selector(toggleDesignAtlas):
+            item.state = model.showDesignAtlas ? .on : .off
+            return editorWindow?.attachedSheet == nil && model.exportPreview == nil
+        case #selector(undo):
+            return model.showDesignAtlas && isEditingText ? NSApp.keyWindow?.firstResponder?.undoManager?.canUndo == true : model.canUndo
+        case #selector(redo):
+            return model.showDesignAtlas && isEditingText ? NSApp.keyWindow?.firstResponder?.undoManager?.canRedo == true : model.canRedo
         case #selector(copyImage), #selector(fit), #selector(zoomIn), #selector(zoomOut):
             return model.review.source != nil
         case #selector(saveImage), #selector(previewExport):
@@ -418,6 +436,7 @@ final class AppActions: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add(view, language.text("进入或退出全屏", "Toggle Full Screen"), #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control])
 
         let help = menu(language.text("帮助", "Help"))
+        add(help, language.designAtlasTitle, #selector(toggleDesignAtlas), "g", modifiers: [.command, .shift], target: self)
         add(help, language.text("打开评审示例", "Open Sample Review"), #selector(openDemo), target: self)
         NSApp.helpMenu = help
         NSApp.mainMenu = root

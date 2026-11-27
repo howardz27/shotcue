@@ -13,6 +13,8 @@ enum AppLanguage: String, CaseIterable, Sendable {
         self == .chinese ? chinese() : english()
     }
 
+    var designAtlasTitle: String { text("界面图鉴", "UI Atlas") }
+
     func annotationCount(_ count: Int) -> String {
         text("\(count) 条标注", count == 1 ? "1 annotation" : "\(count) annotations")
     }

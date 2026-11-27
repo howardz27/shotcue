@@ -84,6 +84,19 @@ enum DevelopmentArtifacts {
             if !condition() { throw VerificationError(message) }
         }
 
+        let glossary = FrontendTerm.all
+        try check(Set(glossary.map(\.id)).count == glossary.count, "Glossary IDs must be unique")
+        try check(Set(glossary.map(\.category)) == Set(TermCategory.allCases), "An empty glossary category was found")
+        for language in AppLanguage.allCases {
+            try check(glossary.allSatisfy { !$0.definition(language).isEmpty && !$0.example(language).isEmpty },
+                      "A glossary entry is missing its definition or feedback")
+        }
+        for (query, term) in [("图片被裁掉", "Contain fit"), ("按钮点不到", "Touch target"), ("CSS Grid", "CSS Grid")] {
+            let match = glossary.first { $0.english == term }
+            try check(match?.searchRank(for: query.components(separatedBy: " ")) ?? 3 <= 1,
+                      "A glossary term or issue alias is missing: \(query)")
+        }
+
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         guard let (source, marks) = Demo.make() else { throw VerificationError("Demo creation failed") }

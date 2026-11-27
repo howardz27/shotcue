@@ -22,6 +22,9 @@ struct Workspace: View {
     @State private var showCaptureOptions = false
     @State private var showSaveOptions = false
     @State private var showLanguageOptions = false
+    @State private var atlasQuery = ""
+    @State private var atlasCategory: TermCategory?
+    @FocusState private var atlasSearchFocused: Bool
 
     private var accent: Color { Color(nsColor: model.annotationAppearance.textAccent) }
 
@@ -36,19 +39,13 @@ struct Workspace: View {
     private var editor: some View {
         VStack(spacing: 0) {
             toolbar
-            HStack(spacing: 0) {
-                board
-                if model.review.source != nil {
-                    Rectangle().fill(Palette.line).frame(width: 1)
-                    Group {
-                        if let draft = model.colorReplacement {
-                            ColorReplacementPanel(model: model, draft: draft)
-                                .id(draft.id)
-                        } else {
-                            NotesPanel(model: model)
-                        }
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    board
+                    if model.showDesignAtlas || model.review.source != nil {
+                        Rectangle().fill(Palette.line).frame(width: 1)
+                        inspector(width: model.showDesignAtlas ? min(880, geometry.size.width * 0.56) : 332)
                     }
-                    .frame(width: 332)
                 }
             }
         }
@@ -60,6 +57,53 @@ struct Workspace: View {
             ExportPreview(review: request.review, appearance: request.appearance, language: request.language)
         }
         .onDrop(of: [.fileURL, .image], isTargeted: $dropTarget, perform: receiveDrop)
+    }
+
+    private func inspector(width: CGFloat) -> some View {
+        ZStack(alignment: .trailing) {
+            if model.review.source != nil {
+                Group {
+                    if let draft = model.colorReplacement {
+                        ColorReplacementPanel(model: model, draft: draft).id(draft.id)
+                    } else {
+                        NotesPanel(model: model, showAtlas: actions.toggleDesignAtlas)
+                    }
+                }
+                .frame(width: 332)
+                .opacity(model.showDesignAtlas ? 0 : 1)
+                .disabled(model.showDesignAtlas)
+                .allowsHitTesting(!model.showDesignAtlas)
+                .accessibilityHidden(model.showDesignAtlas)
+            }
+            if model.showDesignAtlas {
+                VStack(spacing: 0) {
+                    HStack {
+                        Label(language.designAtlasTitle, systemImage: "book.closed")
+                            .font(.system(size: 16, weight: .semibold))
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        ActionButton(language.text("收起", "Collapse"), icon: "sidebar.right",
+                                     hint: language.text("收起界面图鉴", "Collapse UI Atlas"), kind: .quiet) {
+                            model.showDesignAtlas = false
+                        }
+                        .accessibilityIdentifier("design-atlas-close")
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 57)
+                    .overlay(alignment: .bottom) { rule.allowsHitTesting(false) }
+                    FrontendReference(language: language, query: $atlasQuery, category: $atlasCategory,
+                                      searchFocused: $atlasSearchFocused)
+                }
+                .frame(width: width)
+                .background(Palette.surface)
+                .onExitCommand { model.showDesignAtlas = false }
+                .onAppear { atlasSearchFocused = true }
+            }
+        }
+        .frame(width: width)
+        .onChange(of: model.showDesignAtlas) { _, open in
+            if !open { atlasSearchFocused = false }
+        }
     }
 
     private var toolbar: some View {
@@ -334,17 +378,24 @@ struct Workspace: View {
                 ActionButton(language.text("截图", "Capture"), icon: "camera.viewfinder", hint: language.text("截取屏幕区域  ⌘⇧S", "Capture a screen area  ⌘⇧S"), kind: .outline, action: actions.capture)
                     .disabled(model.capturing)
             }
-            Button(action: actions.openDemo) {
-                HStack(spacing: 5) {
-                    Text(language.text("查看评审示例", "View sample review"))
-                    Image(systemName: "arrow.up.right").font(.system(size: 8, weight: .bold))
+            HStack(spacing: 8) {
+                Button(action: actions.openDemo) {
+                    HStack(spacing: 5) {
+                        Text(language.text("查看评审示例", "View sample review"))
+                        Image(systemName: "arrow.up.right").font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 6)
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Palette.secondary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 6)
+                .buttonStyle(.plain)
+                if !model.showDesignAtlas {
+                    ActionButton(language.designAtlasTitle, icon: "book.closed",
+                                 hint: language.text("展开界面图鉴", "Expand UI Atlas"), kind: .quiet, action: actions.toggleDesignAtlas)
+                        .accessibilityIdentifier("design-atlas-open")
+                }
             }
-            .buttonStyle(.plain)
             .padding(.top, 13)
         }
         .padding(28)
@@ -734,6 +785,7 @@ private struct ColorReplacementPanel: View {
 
 private struct NotesPanel: View {
     @ObservedObject var model: ReviewModel
+    let showAtlas: () -> Void
     private var language: AppLanguage { model.language }
     @FocusState private var focused: EditTarget?
 
@@ -746,14 +798,17 @@ private struct NotesPanel: View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
                 Text(language.text("反馈清单", "Feedback")).font(.system(size: 16, weight: .semibold))
-                Spacer()
                 Text(model.review.selectedIDs.count > 1
                      ? language.text("已选 \(model.review.selectedIDs.count) 条", "\(model.review.selectedIDs.count) selected")
                      : language.annotationCount(model.review.marks.count))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Palette.muted)
+                Spacer(minLength: 0)
+                ActionButton(language.designAtlasTitle, icon: "book.closed",
+                             hint: language.text("展开界面图鉴", "Expand UI Atlas"), kind: .quiet, action: showAtlas)
+                    .accessibilityIdentifier("design-atlas-open")
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 14)
             .frame(height: 57)
             .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
 
@@ -789,9 +844,9 @@ private struct NotesPanel: View {
         .frame(maxHeight: .infinity)
         .background(Palette.surface)
         .onChange(of: model.requestedFocus) { _, _ in
-            guard let id = model.review.selectedID else { return }
+            guard !model.showDesignAtlas, let id = model.review.selectedID else { return }
             DispatchQueue.main.async {
-                if model.review.selectedID == id { focused = EditTarget(id: id, field: .problem) }
+                if !model.showDesignAtlas && model.review.selectedID == id { focused = EditTarget(id: id, field: .problem) }
             }
         }
     }

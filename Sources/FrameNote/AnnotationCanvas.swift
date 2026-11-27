@@ -463,6 +463,7 @@ final class MarkCanvas: NSView {
         guard event.type == .keyDown, let window, window.isKeyWindow, let model, model.review.source != nil else { return event }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         let responder = window.firstResponder
+        guard !model.showDesignAtlas || responder === self else { return event }
         let editing = responder is NSTextView || responder is NSTextField || responder is NSTextInputClient
         let key = event.charactersIgnoringModifiers?.lowercased()
 
